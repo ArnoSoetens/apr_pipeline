@@ -1,0 +1,17 @@
+./enumerate -formula xxx -output test.xml -output_directory ../data -unsaturations 0
+
+./enu -formula
+{CH1}1{CH3}2O1C2{OH1}1H2
+
+C{3-6}H{9}
+
+enumerate the constitutional isomers of C5H10O2 with
+one carbon atom connected to exactly one hydrogen, two
+carbon atoms connected to exactly three hydrogens, one
+oxygen atom without a restriction on the number of con-
+nected hydrogens, two carbon atoms without a restric-
+tion on the number of connected hydrogens, one oxygen
+atom connected to exactly one hydrogen, and two hydro-
+gen atoms (additionally to the implicit hydrogens)
+
+TO DO:  the log of choices, when called 
