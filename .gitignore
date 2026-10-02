@@ -1,5 +1,26 @@
 data/
 __pycache__
+**/*.slurm
 *.slurm
 
+cat << 'EOF' > .gitignore
+# Data & Cache
+data/
+__pycache__/
+*.pyc
+
+# HPC & Slurm logs
+*.slurm
+*.out
+*.err
+
+# Environment & IDE
+.env
+.venv/
+env/
+.vscode/
+.DS_Store
+EOF
+
+*.mjs
 
