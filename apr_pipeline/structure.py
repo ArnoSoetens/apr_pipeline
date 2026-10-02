@@ -88,7 +88,7 @@ def smiles_to_pdb(smiles_string, output_file, num_conformers=1):
         for i, cid in enumerate(conf_ids):
             if len(conf_ids) > 1:
                 f.write(f"MODEL     {i + 1}\n")
-            f.write(Chem.MolToPDBBlock(mol, confId=cid, flavor=2))
+            f.write(Chem.MolToPDBBlock(mol, confId=cid, flavor = 2))
             if len(conf_ids) > 1:
                 f.write("ENDMDL\n")
 

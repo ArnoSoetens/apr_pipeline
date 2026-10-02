@@ -140,6 +140,21 @@ def Mol_to_PDB(host, guest_aligned, complex_prefix="BCD-UNL", guest_prefix="UNL"
     return guest_path, complex_path
 
 
+def remove_conect(pdb_path, out_path=None):
+    """Remove all CONECT lines from a PDB file.
+
+    Overwrites the file in place unless out_path is given.
+    Returns the Path of the cleaned file.
+    """
+    pdb_path = Path(pdb_path)
+    out_path = Path(out_path) if out_path else pdb_path
+
+    lines = pdb_path.read_text().splitlines(keepends=True)
+    kept = [line for line in lines if not line.startswith("CONECT")]
+    out_path.write_text("".join(kept))
+    return out_path
+
+
 # --------------------------------------------------------------------------
 # PDB post-processing: residue number (and TER) for the guest
 # --------------------------------------------------------------------------
@@ -253,6 +268,7 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix="BCD-UNL", gue
                                         out_dir=out_dir, flavor=flavor)
     try:
         renumber_guest(guest_pdb, resnum=resnum, resname=resname, add_ter=False)
+        remove_conect(guest_pdb)
         renumber_guest(complex_pdb, resnum=resnum, resname=resname, add_ter=True)
     except ValueError as e:
         raise StageFailure(f"PDB post-processing failed: {e}", stage="generate_pdb") from e
