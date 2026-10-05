@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PMEMD="${PMEMD:-pmemd}"
-MAX_JOBS="${SLURM_CPUS_PER_TASK:-4}"
+MAX_JOBS="${SLURM_CPUS_PER_TASK:-2}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="$(cd "$SCRIPT_DIR/../data" && pwd)"
 TOP="BCD-UNL-dum"

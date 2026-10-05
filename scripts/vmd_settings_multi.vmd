@@ -1,0 +1,54 @@
+# vmd_settings_multi.vmd
+#
+# Defines apply_window_reps, called once per loaded molecule by
+# open_windows.sh (via the generated load script) after all molecules
+# are read in. Edit the representation block below to change how every
+# window is drawn.
+
+proc apply_window_reps {molid} {
+    # Remove any default rep so we control everything explicitly
+    mol delrep 0 $molid
+
+    # --- Representation 0: whole system, default look ---
+    mol representation Lines
+    mol color Name
+    mol selection "all"
+    mol material Opaque
+    mol addrep $molid
+
+    # --- Representation 1: Licorice highlight on index 147 to 190 ---
+    mol representation Licorice 0.3 12.0 12.0
+    mol color Name
+    mol selection "index 147 to 190"
+    mol material Opaque
+    mol addrep $molid
+}
+
+# --- Global display settings (applied once, not per molecule) ---
+display projection Orthographic
+display depthcue off
+color Display Background white
+axes location Off
+animate style Loop
+
+# Playback speed slider (Extensions > Analysis > Animate window) ranges
+# from -1.0 (slowest) to 1.0 (fastest), with 0.0 the default middle.
+# Set to 25% of that range: -0.5
+animate speed 0.25
+
+# By default VMD shows every loaded molecule at once, which gets crowded
+# fast with several windows stacked in the same view. This hides all but
+# the first-loaded molecule so you see one window at a time; use the
+# Molecule menu (double-click the "D" column) to toggle visibility for
+# whichever window you want to inspect, or use the VMD Main window's
+# molecule list to step through them.
+proc hide_all_but_first {} {
+    set mols [molinfo list]
+    if {[llength $mols] < 2} { return }
+    set first [lindex $mols 0]
+    foreach m $mols {
+        if {$m != $first} {
+            mol off $m
+        }
+    }
+}

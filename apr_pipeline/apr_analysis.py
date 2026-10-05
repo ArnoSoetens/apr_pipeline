@@ -19,7 +19,42 @@ def pull_window_histograms(simulation_data, out_path, restraint_index=0):
     plt.close()
 
 
-def calculate_free_energy(windows_dir, plot_path=None, title_name="guest",
+def attach_window_grid(fe, out_path, restraint_index=0, phase="attach", ncols=5):
+    """One histogram per attach window: sampled restraint values, with the target as a red line.
+
+    restraint_index 0 is the distance restraint (Å). For the angle/torsion restraints
+    (1, 2) the values may need converting from radians to degrees.
+    """
+    data = fe.simulation_data[phase]                 # list per window, per restraint
+    num_win = len(data)
+
+    # ordered targets for this restraint, in the same window order as simulation_data
+    _, _, _, _, _, ordered_targets, _ = fe.prepare_data(phase)
+    targets = ordered_targets[restraint_index].magnitude
+
+    nrows = int(np.ceil(num_win / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 2.5 * nrows),
+                             sharex=True, sharey=True)
+    axes = np.atleast_1d(axes).flatten()
+
+    for k in range(num_win):
+        ax = axes[k]
+        values = data[k][restraint_index].magnitude
+        ax.hist(values, bins=40, color="steelblue", alpha=0.8)
+        ax.axvline(targets[k], color="red", linestyle="--", linewidth=1)
+        ax.set_title(f"a{k:03d}", fontsize=9)
+        ax.tick_params(labelsize=7)
+
+    for k in range(num_win, len(axes)):              # switch off unused slots
+        axes[k].axis("off")
+
+    fig.suptitle("Attach phase: restraint value distribution per window", y=1.0)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+
+
+def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
                           host_prefix="BCD", guest_prefix="UNL", boot_cycles=1000):
     """Returns (results dict, simulation_data). dG values in kcal/mol."""
 
@@ -65,6 +100,9 @@ def calculate_free_energy(windows_dir, plot_path=None, title_name="guest",
         plt.savefig(plot_path, dpi=400)
         plt.close()
 
+    if grid_path:
+        attach_window_grid(fe, grid_path)
+
     out = {"dG_bind": dg, "dG_sem": dg_sem, "units": "kcal/mol",
            "ref_state_work": float(ref_work),
            "attach_fe": [float(x) for x in attach_fe], "pull_fe": [float(x) for x in pull_fe]}
@@ -83,6 +121,7 @@ def run(dp, host_prefix="BCD", guest_prefix="UNL"):
         raise FileNotFoundError(f"{len(missing)} window(s) without production.nc, e.g. {missing[:3]}")
 
     results, sim_data = calculate_free_energy(windows, plot_path=dp / "binding_free_energy.jpg",
+                                              grid_path=dp / "attach_windows_grid.jpg",
                                               title_name=dp.name, host_prefix=host_prefix,
                                               guest_prefix=guest_prefix)
     pull_window_histograms(sim_data, dp / "pull_window_histograms.jpg")
