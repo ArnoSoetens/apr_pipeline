@@ -76,7 +76,7 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     fe.compute_free_energy()
     sim_data = fe.simulation_data
 
-    fe.compute_ref_state_work([guest_restraints[0], guest_restraints[1], None, None, None, None])
+    fe.compute_ref_state_work([guest_restraints[0], guest_restraints[1], None, None, guest_restraints[2], None,])
 
     res = fe.results
     binding_affinity = -1 * (res["attach"]["ti-block"]["fe"] + res["pull"]["ti-block"]["fe"]

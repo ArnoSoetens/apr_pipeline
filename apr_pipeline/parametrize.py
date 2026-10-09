@@ -11,7 +11,7 @@ def parametrize(data_dir, guest_pdb="UNL.pdb", guest_prefix="UNL"):
         "-c", "bcc",
         "-pf", "y",
         "-nc", "-1",
-        "-at", "gaff2"
+        "-at", "gaff"
     ],
     cwd=data_dir,
     check=True,

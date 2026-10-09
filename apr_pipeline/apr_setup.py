@@ -31,7 +31,7 @@ def build_system( data_dir_host, data_dir_guest, host_prefix = "BCD", guest_pref
     system.pbc_type = None
     system.neutralize = False
     system.template_lines = [
-        "source leaprc.gaff2",
+        "source leaprc.gaff",
         "loadamberparams frcmod.ions1lm_126_tip3p",
         f"loadamberparams {data_dir_host}/{host_prefix}.frcmod",
         f"{host_prefix} = loadmol2 {data_dir_host}/{host_prefix}.mol2",
@@ -81,7 +81,7 @@ def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_pr
     system.pbc_type = None
     system.neutralize = False
     system.template_lines = [
-        "source leaprc.gaff2",
+        "source leaprc.gaff",
         "loadamberparams frcmod.ions1lm_126_tip3p",
         f"loadamberparams {data_dir_host}/{host_prefix}.frcmod",
         f"{host_prefix} = loadmol2 {data_dir_host}/{host_prefix}.mol2",
