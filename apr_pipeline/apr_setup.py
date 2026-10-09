@@ -24,7 +24,7 @@ import shutil
 
 # --- Build vacuum complex with tleap ---
 
-def build_system( data_dir_host, data_dir_guest, host_prefix = "BCD", guest_prefix = "UNL"):
+def build_system( data_dir_host, data_dir_guest, host_prefix = "BCD", guest_prefix = "UNL", radii_set='mbondi'):
     os.makedirs("complex", exist_ok=True)
     system = TLeap()
     system.output_path = "complex"
@@ -33,6 +33,7 @@ def build_system( data_dir_host, data_dir_guest, host_prefix = "BCD", guest_pref
     system.template_lines = [
         "source leaprc.gaff",
         "loadamberparams frcmod.ions1lm_126_tip3p",
+        f"set default PBRadii {radii_set}",
         f"loadamberparams {data_dir_host}/{host_prefix}.frcmod",
         f"{host_prefix} = loadmol2 {data_dir_host}/{host_prefix}.mol2",
         f"loadamberparams {data_dir_guest}/{guest_prefix}.frcmod",
@@ -56,7 +57,7 @@ def guest_masks(b1_idx, b2_idx, guest_prefix="UNL"):
     return G1, G2
 
 
-def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_prefix="UNL"): 
+def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_prefix="UNL", radii_set = "mbondi3"): 
     structure = pmd.load_file("complex/vac.prmtop", "complex/vac.rst7", structure=True)
     aligned = align.zalign(structure, G1, G2)
     aligned.save("complex/aligned.prmtop", overwrite=True)
@@ -83,6 +84,7 @@ def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_pr
     system.template_lines = [
         "source leaprc.gaff",
         "loadamberparams frcmod.ions1lm_126_tip3p",
+        f"set default PBRadii {radii_set}",
         f"loadamberparams {data_dir_host}/{host_prefix}.frcmod",
         f"{host_prefix} = loadmol2 {data_dir_host}/{host_prefix}.mol2",
         f"loadamberparams {data_dir_guest}/{guest_prefix}.frcmod",
