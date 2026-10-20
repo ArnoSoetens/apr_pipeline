@@ -39,8 +39,8 @@ python scripts/main.py                   # serial: folders from the XML, then ev
 python scripts/main.py --force           # ... also redo the complete ones
 python scripts/main.py iso_00001 iso_00002   # just these (what an array task does)
 
-python apr_pipeline/create_data_directories.py        # array mode: make the folders first (quick)
-python scripts/submit_arrays.py setup --submit        # one array task = a few data points (slurm.setup_*)
+python scripts/submit_arrays.py setup --submit        # creates data point folders from the XML on first run
+                                                      # one array task = a few data points (slurm.setup_*)
 python scripts/submit_arrays.py setup --retry-failed --submit
 ```
 

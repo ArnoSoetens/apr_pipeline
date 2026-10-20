@@ -9,11 +9,11 @@
     python submit_arrays.py analysis --submit      # only the analysis
 
 Setup
-    The data point folders must exist (python apr_pipeline/create_data_directories.py). Data points
+    If no data point folders exist yet, they are created from the XML automatically. Data points
     without complete windows are cut into tasks of a few data points; each task runs main.py for its
     data points. A failed data point gets a setup_failed.txt and is left out next time (--retry-failed).
     Run 'setup' first and wait for it: the simulation list is made from the windows setup creates.
-    (Setting up serially is always possible too: python scripts/main.py)
+    (Setting up serially is also possible: python scripts/main.py)
 Simulation
     Every window that still has to be simulated goes into ONE list (lines like iso_00001/a000).
     The list is cut into work packages of  sim_cpus x sim_windows_per_cpu  windows. One array task
@@ -48,6 +48,21 @@ from datapoints import DATA, data_points, failure_reason, scan
 
 LOGS = Path(CFG["directories"]["logs"])
 SL = CFG["slurm"]
+
+
+def ensure_data_directories():
+    """Create data point folders from the XML when none exist yet."""
+    if DATA.is_dir() and data_points():
+        return
+
+    pipeline_dir = Path(CFG["directories"]["pipeline"])
+    creator = pipeline_dir / "create_data_directories.py"
+    print(f"\n[directories] creating data point folders from {CFG['directories']['input_xml']}")
+    subprocess.run(
+        [sys.executable, str(creator), CFG["directories"]["input_xml"], str(DATA)],
+        cwd=pipeline_dir,
+        check=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +265,9 @@ def main():
     ap.add_argument("--only", nargs="+", metavar="NAME")
     args = ap.parse_args()
 
+    if args.command != "status":
+        ensure_data_directories()
+
     dps = data_points(args.only)
     if args.command == "status":
         show_status(dps)
@@ -281,8 +299,7 @@ def main():
             submit_points("setup", sorted(names), args.points_per_task or SL["setup_data_points_per_task"],
                           None, args.submit, stamp)
         elif not dps:
-            print(f"\nno data point folders in {DATA}; create them first: "
-                  f"python apr_pipeline/create_data_directories.py")
+            print(f"\nno data point folders were created in {DATA}; check the configured input XML")
         else:
             print("\n[setup] nothing to set up")
         if failed_names and not args.retry_failed:
