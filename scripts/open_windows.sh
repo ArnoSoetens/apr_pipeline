@@ -25,13 +25,14 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA_DIR="$(cd "$SCRIPT_DIR/../data" && pwd)"
+
+# DATA_DIR and TRAJECTORY come from config.toml (see config_env.py)
+CONFIG_ENV="$(python "$SCRIPT_DIR/config_env.py")"
+eval "$CONFIG_ENV"
 
 TOPOLOGY_GLOB="*.prmtop"
 
-# Trajectory to look at. Each window has minimize.nc, production.nc and
-# production2.nc, so we name the one we want (change it here or with --traj).
-TRAJECTORY="production.nc"
+# Trajectory to look at: analysis.trajectory in config.toml, or --traj FILE.
 
 # Where cpptraj writes its result, inside each window folder.
 OUTPUT_SUBDIR="analysis"

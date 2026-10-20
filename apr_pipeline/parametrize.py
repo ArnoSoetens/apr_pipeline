@@ -1,6 +1,8 @@
 import subprocess
 
-def parametrize(data_dir, guest_pdb="UNL.pdb", guest_prefix="UNL"):
+from APR.apr_refactor.apr_pipeline.apr_config import CFG
+
+def parametrize(data_dir, guest_pdb=f'{CFG["naming"]["guest_prefix"]}.pdb', guest_prefix=CFG["naming"]["guest_prefix"]):
     result = subprocess.run(
     [
         "antechamber",
@@ -8,10 +10,11 @@ def parametrize(data_dir, guest_pdb="UNL.pdb", guest_prefix="UNL"):
         "-fi", "pdb",
         "-o", f"{guest_prefix}.mol2",
         "-fo", "mol2",
-        "-c", "bcc",
+        "-c", CFG["parametrize"]["charge_method"],
         "-pf", "y",
-        "-nc", "-1",
-        "-at", "gaff"
+        "-nc", str(CFG["parametrize"]["net_charge"]),
+        "-rn", guest_prefix,
+        "-at", CFG["parametrize"]["atom_type"]
     ],
     cwd=data_dir,
     check=True,
@@ -22,10 +25,10 @@ def parametrize(data_dir, guest_pdb="UNL.pdb", guest_prefix="UNL"):
     result2 = subprocess.run(
         [
             "parmchk2",
-            "-i", "UNL.mol2",
+            "-i", f"{guest_prefix}.mol2",
             "-f", "mol2",
             "-o", f"{guest_prefix}.frcmod",
-            "-s", "2"
+            "-s", str(CFG["parametrize"]["parmchk_set"])
 
         ],
         cwd=data_dir,

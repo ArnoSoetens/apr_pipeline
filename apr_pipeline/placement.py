@@ -6,13 +6,13 @@ host+guest PDB files in the format the downstream steps expect.
 
 Typical use
 -----------
-    from guest_placement import place_guest_in_cavity, generate_pdb, StageFailure
+    from placement import place_guest_in_cavity, generate_pdb
 
     guest_aligned, R, midpoint = place_guest_in_cavity(guest, b1_idx=0, b2_idx=3)
     try:
         out = generate_pdb(host, guest_aligned, out_dir="isomers/CCCCF")
-    except StageFailure as e:
-        print("skipped:", e.reason)   # e.g. clash -> record in status.json, move on
+    except ValueError as e:
+        print("skipped:", e)   # e.g. clash -> report it and move on
     else:
         print(out["guest_pdb"], out["complex_pdb"])
 
@@ -28,8 +28,9 @@ import numpy as np
 from rdkit import Chem
 from scipy.spatial.distance import cdist
 
+from APR.apr_refactor.apr_pipeline.apr_config import CFG
+
 __all__ = [
-    "StageFailure",
     "rotation_matrix_from_vectors",
     "place_guest_in_cavity",
     "clash_report",
@@ -39,20 +40,6 @@ __all__ = [
     "renumber_guest",
     "generate_pdb",
 ]
-
-
-class StageFailure(Exception):
-    """An expected, recordable failure of a pipeline stage (clash, bad PDB, ...).
-
-    A driver loop should catch this, store `reason` in the datapoint's
-    status.json, and move on to the next datapoint instead of crashing.
-    """
-
-    def __init__(self, reason, stage=None, details=None):
-        super().__init__(reason)
-        self.reason = reason
-        self.stage = stage
-        self.details = details or {}
 
 
 # --------------------------------------------------------------------------
@@ -77,7 +64,8 @@ def rotation_matrix_from_vectors(a, b):
     return np.eye(3) + vx + vx @ vx * ((1 - c) / (s ** 2))
 
 
-def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=(0, 0, 0), cavity_axis=(0, 0, 1)):
+def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=CFG["placement"]["cavity_center"],
+                          cavity_axis=CFG["placement"]["cavity_axis"]):
     coords = guest_mol.GetConformer().GetPositions()
 
     backbone_axis = coords[b2_idx] - coords[b1_idx]
@@ -95,7 +83,7 @@ def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=(0, 0, 0), ca
     return new_mol, R, backbone_midpoint
 
 
-def clash_report(host_mol, guest_mol, clash_cutoff=1.5):
+def clash_report(host_mol, guest_mol, clash_cutoff=CFG["placement"]["clash_cutoff"]):
     hc = host_mol.GetConformer().GetPositions()
     gc = guest_mol.GetConformer().GetPositions()
     dmat = cdist(hc, gc)
@@ -122,7 +110,7 @@ def radial_containment(guest_mol, cavity_center, cavity_axis):
 # PDB writing
 # --------------------------------------------------------------------------
 
-def Mol_to_PDB(host, guest_aligned, complex_prefix="BCD-UNL", guest_prefix="UNL",
+def Mol_to_PDB(host, guest_aligned, complex_prefix=CFG["naming"]["complex_prefix"], guest_prefix=CFG["naming"]["guest_prefix"],
                out_dir=".", flavor=2):
     """Write the guest alone and the host+guest complex as PDB files.
 
@@ -166,7 +154,7 @@ def eol_of(line: str) -> str:
     return line[len(line.rstrip("\r\n")):]
 
 
-def convert(lines, resname="UNL", resnum=2, add_ter=True):
+def convert(lines, resname=CFG["naming"]["guest_prefix"], resnum=CFG["placement"]["guest_resnum"], add_ter=True):
     """Return (new_lines, n_ter_added, n_renumbered).
 
     A TER is only added at the start of a resname block when add_ter is True,
@@ -175,6 +163,7 @@ def convert(lines, resname="UNL", resnum=2, add_ter=True):
     """
     RESNAME_COLS = slice(17, 20)   # PDB cols 18-20
     RESNUM_COLS = slice(22, 26)    # PDB cols 23-26 (right-justified)
+    RDKIT_RESNAME = "UNL"          # residue name RDKit writes; renamed to `resname` below
 
     if not 0 <= resnum <= 9999:
         raise ValueError("resnum must fit in the 4-character PDB residue field (0-9999)")
@@ -189,7 +178,7 @@ def convert(lines, resname="UNL", resnum=2, add_ter=True):
         is_target = (
             line.startswith("HETATM")
             and len(line.rstrip("\r\n")) >= RESNUM_COLS.stop
-            and line[RESNAME_COLS].strip() == resname
+            and line[RESNAME_COLS].strip() == RDKIT_RESNAME
         )
 
         if is_target:
@@ -197,6 +186,7 @@ def convert(lines, resname="UNL", resnum=2, add_ter=True):
                     and not (out and out[-1].startswith("TER"))):
                 out.append("TER  " + (eol_of(line) or "\n"))
                 n_ter += 1
+            line = line[:RESNAME_COLS.start] + f"{resname:>3}" + line[RESNAME_COLS.stop:]
             line = line[:RESNUM_COLS.start] + f"{resnum:>4d}" + line[RESNUM_COLS.stop:]
             n_renum += 1
             in_block = True
@@ -210,7 +200,8 @@ def convert(lines, resname="UNL", resnum=2, add_ter=True):
     return out, n_ter, n_renum
 
 
-def renumber_guest(input_path, output_path=None, resnum=2, resname="UNL", add_ter=False):
+def renumber_guest(input_path, output_path=None, resnum=CFG["placement"]["guest_resnum"],
+                   resname=CFG["naming"]["guest_prefix"], add_ter=False):
     """Set the residue number of the `resname` lines in a PDB file.
 
     Defaults are for a guest-only file: residue 2, no TER. Pass add_ter=True
@@ -227,7 +218,7 @@ def renumber_guest(input_path, output_path=None, resnum=2, resname="UNL", add_te
 
     new_lines, n_ter, n_renum = convert(lines, resname, resnum, add_ter)
     if n_renum == 0:
-        raise ValueError(f"no HETATM lines with residue name {resname!r} in {input_path}")
+        raise ValueError(f"no HETATM lines with RDKit's residue name 'UNL' in {input_path}")
 
     with open(output_path, "w", newline="") as f:
         f.writelines(new_lines)
@@ -238,30 +229,29 @@ def renumber_guest(input_path, output_path=None, resnum=2, resname="UNL", add_te
 # The stage: clash check -> write PDBs -> fix residue numbering
 # --------------------------------------------------------------------------
 
-def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix="BCD-UNL", guest_prefix="UNL",
-                 resnum=2, resname="UNL", flavor=2, clash_cutoff=1.5):
+def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"]["complex_prefix"], guest_prefix=CFG["naming"]["guest_prefix"],
+                 resnum=CFG["placement"]["guest_resnum"], resname=CFG["naming"]["guest_prefix"], flavor=2,
+                 clash_cutoff=CFG["placement"]["clash_cutoff"]):
     """Write <guest_prefix>.pdb and <complex_prefix>.pdb into out_dir.
 
     1. Clash check: if any host-guest atom pair is closer than clash_cutoff
-       (Angstrom), raise StageFailure BEFORE anything is written.
+       (Angstrom), raise ValueError BEFORE anything is written.
        Pass clash_cutoff=None to skip the check.
     2. Write both files with RDKit (see Mol_to_PDB).
     3. Set the guest's residue number to `resnum` in both files, and insert a
        TER before the guest in the complex file (the guest-only file gets none).
 
     Returns {"guest_pdb": Path, "complex_pdb": Path, "clash": report or None}.
-    Raises StageFailure on a clash or if the guest residue can't be found.
+    Raises ValueError on a clash or if the guest residue can't be found.
     """
     report = None
     if clash_cutoff is not None:
         report = clash_report(host, guest_aligned, clash_cutoff)
         if report["n_pairs_under_cutoff"] > 0:
-            raise StageFailure(
+            raise ValueError(
                 f"clash: {report['n_pairs_under_cutoff']} host-guest atom pair(s) closer than "
                 f"{clash_cutoff} A (min {report['min_distance']:.2f} A between host atom "
-                f"{report['closest_host_atom']} and guest atom {report['closest_guest_atom']})",
-                stage="generate_pdb",
-                details=report,
+                f"{report['closest_host_atom']} and guest atom {report['closest_guest_atom']})"
             )
 
     guest_pdb, complex_pdb = Mol_to_PDB(host, guest_aligned, complex_prefix, guest_prefix,
@@ -271,6 +261,6 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix="BCD-UNL", gue
         remove_conect(guest_pdb)
         renumber_guest(complex_pdb, resnum=resnum, resname=resname, add_ter=True)
     except ValueError as e:
-        raise StageFailure(f"PDB post-processing failed: {e}", stage="generate_pdb") from e
+        raise ValueError(f"PDB post-processing failed: {e}") from e
 
     return {"guest_pdb": guest_pdb, "complex_pdb": complex_pdb, "clash": report}, print("PDB succesfully created")

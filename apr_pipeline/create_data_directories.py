@@ -7,21 +7,26 @@ Parses an isomer_enumeration XML file and, for every <isomer>, creates:
 and writes <isomers_dir>/isomers.csv mapping folder -> isomer_id -> SMILES.
 
 Usage:
-    python3 create_data_directories.py <path_to_xml> <isomers_output_dir>
+    python3 create_data_directories.py [<path_to_xml> <isomers_output_dir>]   (default: from config.toml)
 """
 import csv
 import sys
 import os
 import xml.etree.ElementTree as ET
 
+from APR.apr_refactor.apr_pipeline.apr_config import CFG
+
 
 def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <path_to_xml> <isomers_output_dir>", file=sys.stderr)
+    if len(sys.argv) == 1:          # no arguments: both come from config.toml
+        xml_path = CFG["directories"]["input_xml"]
+        isomers_dir = CFG["directories"]["data"]
+    elif len(sys.argv) == 3:
+        xml_path = sys.argv[1]
+        isomers_dir = sys.argv[2]
+    else:
+        print(f"Usage: {sys.argv[0]} [<path_to_xml> <isomers_output_dir>]", file=sys.stderr)
         sys.exit(1)
-
-    xml_path = sys.argv[1]
-    isomers_dir = sys.argv[2]
 
     if not os.path.isfile(xml_path):
         print(f"Error: XML file not found: {xml_path}", file=sys.stderr)
@@ -44,7 +49,7 @@ def main():
             continue
 
         smiles = smiles_el.text.strip()
-        dir_name = f"iso_{number:05d}"
+        dir_name = f"{CFG['naming']['folder_prefix']}{number:0{CFG['naming']['folder_digits']}d}"
 
         smiles_dir = os.path.join(isomers_dir, dir_name)
         os.makedirs(smiles_dir, exist_ok=True)

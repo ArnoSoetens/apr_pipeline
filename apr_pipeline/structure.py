@@ -35,10 +35,12 @@ from scipy.spatial.distance import cdist
 from pathlib import Path
 import argparse
 
+from APR.apr_refactor.apr_pipeline.apr_config import CFG
 
 
 
-def smiles_to_pdb(smiles_string, output_file, num_conformers=1):
+
+def smiles_to_pdb(smiles_string, output_file, num_conformers=CFG["structure"]["conformers"]):
     """
     Convert a SMILES string to a PDB file with one or more 3D conformers.
 
@@ -61,7 +63,7 @@ def smiles_to_pdb(smiles_string, output_file, num_conformers=1):
 
     print(f"Generating {num_conformers} conformer(s)...")
     params = AllChem.ETKDG()
-    params.randomSeed = 42
+    params.randomSeed = CFG["structure"]["random_seed"]
     params.numThreads = 0  # use all available threads
 
     if num_conformers == 1:
@@ -78,7 +80,7 @@ def smiles_to_pdb(smiles_string, output_file, num_conformers=1):
 
     print(f"Optimizing {len(conf_ids)} conformer(s) with UFF force field...")
     for i, cid in enumerate(conf_ids):
-        result = AllChem.UFFOptimizeMolecule(mol, maxIters=1000, confId=cid)
+        result = AllChem.UFFOptimizeMolecule(mol, maxIters=CFG["structure"]["uff_max_iters"], confId=cid)
         if result != 0:
             print(f"Warning: UFF optimization for conformer {i + 1} returned code {result}")
     print("Geometry optimization completed")

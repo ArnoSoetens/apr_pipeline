@@ -10,6 +10,16 @@ import matplotlib.pyplot as plt
 from paprika import analysis
 from paprika.io import load_restraints
 
+from APR.apr_refactor.apr_pipeline.apr_config import CFG, get_attach_fractions, get_pull_distances, get_method
+
+# --- values from config.toml ---
+COMPLEX = CFG["naming"]["complex_prefix"]
+INITIAL_DISTANCE = CFG["apr"]["initial_distance"]
+METHOD = get_method()                     # "ti-block" or "mbar-autoc"
+ENHANCED = CFG["analysis"]["enhanced"]
+BOOT_CYCLES = CFG["analysis"]["bootstrap_cycles"]
+TRAJECTORY = CFG["analysis"]["trajectory"]
+
 
 def pull_window_histograms(simulation_data, out_path, restraint_index=0):
     for values in (w[restraint_index] for w in simulation_data["pull"]):
@@ -54,23 +64,39 @@ def attach_window_grid(fe, out_path, restraint_index=0, phase="attach", ncols=5)
     plt.close(fig)
 
 
+def _mag(x):
+    """Strip pint units and give plain numbers / lists (so json can store them)."""
+    return np.asarray(getattr(x, "magnitude", x)).tolist()
+
+
+def _phase_details(res, phase):
+    """Per-phase numbers for the enhanced results.json."""
+    r = res[phase][METHOD]
+    details = {"fe": _mag(r["fe"]), "sem": _mag(r["sem"]),
+               "fe_per_window": _mag(r["fe_matrix"][0, :])}     # cumulative, window 0 -> window k
+    if "sem_matrix" in r:
+        details["sem_per_window"] = _mag(r["sem_matrix"][0, :])
+    if "window_order" in res[phase]:
+        details["window_order"] = [str(w) for w in res[phase]["window_order"]]
+    return details
+
+
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
-                          host_prefix="BCD", guest_prefix="UNL", boot_cycles=1000):
+                          complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=ENHANCED):
     """Returns (results dict, simulation_data). dG values in kcal/mol."""
 
-    attach_string = "0.00 0.01 0.0375 0.40 0.80 1.60 2.40 4.00 5.50 8.65 11.80 18.10 24.40 37.00 49.60 74.80 100.00"
-    attach_fractions = [float(i) / 100 for i in attach_string.split()]
-    initial_distance = 6.0
-    pull_distances = np.arange(initial_distance, 14.5 + initial_distance, 0.5)
+    attach_fractions = get_attach_fractions()
+    initial_distance = INITIAL_DISTANCE
+    pull_distances = get_pull_distances()
     guest_restraints = load_restraints(f"{windows_dir}/restraints.json")
 
     fe = analysis.fe_calc()
-    fe.topology = f"{host_prefix}-{guest_prefix}-dum.prmtop"
-    fe.trajectory = "production.nc"
+    fe.topology = f"{complex_prefix}-dum.prmtop"
+    fe.trajectory = TRAJECTORY
     fe.path = str(windows_dir)
     fe.restraint_list = guest_restraints
     fe.collect_data()
-    fe.methods = ["ti-block"]
+    fe.methods = [METHOD]
     fe.ti_matrix = "full"
     fe.boot_cycles = boot_cycles
     fe.compute_free_energy()
@@ -79,17 +105,17 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     fe.compute_ref_state_work([guest_restraints[0], guest_restraints[1], None, None, guest_restraints[2], None,])
 
     res = fe.results
-    binding_affinity = -1 * (res["attach"]["ti-block"]["fe"] + res["pull"]["ti-block"]["fe"]
+    binding_affinity = -1 * (res["attach"][METHOD]["fe"] + res["pull"][METHOD]["fe"]
                              + res["ref_state_work"])
-    sem = np.sqrt(res["attach"]["ti-block"]["sem"] ** 2 + res["pull"]["ti-block"]["sem"] ** 2)
+    sem = np.sqrt(res["attach"][METHOD]["sem"] ** 2 + res["pull"][METHOD]["sem"] ** 2)
 
-    attach_fe = res["attach"]["ti-block"]["fe_matrix"][0, :].magnitude
-    pull_fe = res["pull"]["ti-block"]["fe_matrix"][0, :].magnitude
+    attach_fe = res["attach"][METHOD]["fe_matrix"][0, :].magnitude
+    pull_fe = res["pull"][METHOD]["fe_matrix"][0, :].magnitude
     ref_work = res["ref_state_work"].magnitude
     dg, dg_sem = float(binding_affinity.magnitude), float(sem.magnitude)
 
     if plot_path:
-        x_pull = pull_distances - 6 + attach_fractions[-1]
+        x_pull = pull_distances - initial_distance + attach_fractions[-1]
         plt.plot(attach_fractions, attach_fe, label="attach phase")
         plt.plot(x_pull, attach_fe[-1] + pull_fe, label="pull phase")
         plt.plot([x_pull[-1]] * 2, [attach_fe[-1] + pull_fe[-1], attach_fe[-1] + pull_fe[-1] + ref_work],
@@ -106,24 +132,30 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     out = {"dG_bind": dg, "dG_sem": dg_sem, "units": "kcal/mol",
            "ref_state_work": float(ref_work),
            "attach_fe": [float(x) for x in attach_fe], "pull_fe": [float(x) for x in pull_fe]}
+    if enhanced:
+        out["method"] = METHOD
+        out["attach_fractions"] = attach_fractions
+        out["pull_distances"] = [float(x) for x in pull_distances]
+        out["phases"] = {phase: _phase_details(res, phase) for phase in ("attach", "pull")}
     return out, sim_data
 
 
-def run(dp, host_prefix="BCD", guest_prefix="UNL"):
+def run(dp, complex_prefix=COMPLEX):
     dp = Path(dp)
     windows = dp / "windows"
     print(windows)
 
     # every window folder must have finished its production run
     missing = [w.name for w in sorted(windows.iterdir())
-               if w.is_dir() and not (w / "production.nc").exists()]
+               if w.is_dir() and not (w / TRAJECTORY).exists()]
     if missing:
-        raise FileNotFoundError(f"{len(missing)} window(s) without production.nc, e.g. {missing[:3]}")
+        raise FileNotFoundError(f"{len(missing)} window(s) without {TRAJECTORY}, e.g. {missing[:3]}")
 
     results, sim_data = calculate_free_energy(windows, plot_path=dp / "binding_free_energy.jpg",
-                                              grid_path=dp / "attach_windows_grid.jpg",
-                                              title_name=dp.name, host_prefix=host_prefix,
-                                              guest_prefix=guest_prefix)
-    pull_window_histograms(sim_data, dp / "pull_window_histograms.jpg")
+                                              grid_path=(dp / "attach_windows_grid.jpg") if ENHANCED else None,
+                                              title_name=dp.name, complex_prefix=complex_prefix,
+                                              enhanced=ENHANCED)
+    if ENHANCED:
+        pull_window_histograms(sim_data, dp / "pull_window_histograms.jpg")
     (dp / "results.json").write_text(json.dumps(results, indent=2))
     return {"dG_bind": results["dG_bind"], "dG_sem": results["dG_sem"]}

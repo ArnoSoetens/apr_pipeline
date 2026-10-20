@@ -4,8 +4,17 @@ import sys
 from rdkit import Chem
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-data_dir = os.path.abspath(os.path.join(script_dir, "..", "data"))
-pipeline_dir = os.path.abspath(os.path.join(script_dir, "..", "apr_pipeline"))
+
+# bootstrap: just enough to import apr_config (apr_pipeline/ sits next to scripts/)
+sys.path.insert(0, os.path.abspath(os.path.join(script_dir, "..", "apr_pipeline")))
+
+from apr_config import CFG
+
+data_dir = CFG["directories"]["data"]
+host_dir = CFG["directories"]["host"]
+pipeline_dir = CFG["directories"]["pipeline"]
+HOST = CFG["naming"]["host_prefix"]
+GUEST = CFG["naming"]["guest_prefix"]
 
 sys.path.insert(0, pipeline_dir)   # lets Python find the "pipeline" package
 
@@ -17,11 +26,11 @@ from apr_setup import *
 
 
 
-subprocess.run(["python3", "create_data_directories.py", f"{data_dir}/data_input.xml", f"{data_dir}"], cwd=pipeline_dir)
+subprocess.run(["python3", "create_data_directories.py", CFG["directories"]["input_xml"], data_dir], cwd=pipeline_dir)
 
-HOST_PDB = os.path.join(data_dir,"BCD.pdb")
-HOST_mol2 = os.path.join(data_dir,"BCD.mol2")
-HOST_frcmod = os.path.join(data_dir,"BCD.frcmod")
+HOST_PDB = os.path.join(host_dir, f"{HOST}.pdb")
+HOST_mol2 = os.path.join(host_dir, f"{HOST}.mol2")
+HOST_frcmod = os.path.join(host_dir, f"{HOST}.frcmod")
 host = Chem.MolFromPDBFile(HOST_PDB, removeHs=False)
 
 
@@ -31,12 +40,14 @@ for name in sorted(os.listdir(data_dir)):
         continue
 
     smi_file = os.path.join(data_point_dir, f"{name}.smi")
+    if not os.path.isfile(smi_file):                   # not a data point folder
+        continue
     with open(smi_file) as f:
         smiles = f.read().strip()
                   # the real SMILES
 
     try:
-        mol = smiles_to_pdb(smiles, os.path.join(data_point_dir, "UNL.pdb"))
+        mol = smiles_to_pdb(smiles, os.path.join(data_point_dir, f"{GUEST}.pdb"))
     except ValueError as e:
         print(name, "FAILED:", e)
         continue
@@ -50,7 +61,7 @@ for name in sorted(os.listdir(data_dir)):
 
         parametrize(data_point_dir)
 
-        setup_datapoint(data_point_dir, data_dir, G1, G2)
+        setup_datapoint(data_point_dir, host_dir, G1, G2)
     except Exception as e:
         print(name, "FAILED:", e)
         continue

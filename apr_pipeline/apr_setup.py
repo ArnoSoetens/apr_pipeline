@@ -17,6 +17,29 @@ from paprika.restraints.utils import create_window_list
 
 import shutil
 
+from apr_config import CFG, get_attach_fractions, get_pull_distances, get_radii_set
+
+# --- values from config.toml ---
+HOST = CFG["naming"]["host_prefix"]
+GUEST = CFG["naming"]["guest_prefix"]
+COMPLEX = CFG["naming"]["complex_prefix"]
+ATOM_TYPE = CFG["parametrize"]["atom_type"]
+RADII = get_radii_set()
+
+INITIAL_DISTANCE = CFG["apr"]["initial_distance"]
+FINAL_DISTANCE = CFG["apr"]["final_distance"]
+DUMMY_Z = CFG["apr"]["dummy_z"]
+DUMMY3_Y = CFG["apr"]["dummy3_y"]
+HOST_ANCHOR_ATOMS = CFG["apr"]["host_anchor_atoms"]
+
+DIST_FC = CFG["apr"]["restraints"]["distance_fc"]
+ANGLE_FC = CFG["apr"]["restraints"]["angle_fc"]
+TORSION_FC = CFG["apr"]["restraints"]["torsion_fc"]
+ANGLE_TARGET = CFG["apr"]["restraints"]["angle_target"]
+TORSION_TARGET = CFG["apr"]["restraints"]["torsion_target"]
+STATIC_FC = CFG["apr"]["restraints"]["static_fc"]
+CONF_FC = CFG["apr"]["restraints"]["host_conformational_fc"]
+
 
 ##host = "BCD"
 ##guest = "UNL"
@@ -24,21 +47,21 @@ import shutil
 
 # --- Build vacuum complex with tleap ---
 
-def build_system( data_dir_host, data_dir_guest, host_prefix = "BCD", guest_prefix = "UNL", radii_set='mbondi'):
+def build_system( data_dir_host, data_dir_guest, host_prefix=HOST, guest_prefix=GUEST, radii_set=RADII):
     os.makedirs("complex", exist_ok=True)
     system = TLeap()
     system.output_path = "complex"
     system.pbc_type = None
     system.neutralize = False
     system.template_lines = [
-        "source leaprc.gaff",
+        f"source leaprc.{ATOM_TYPE}",
         "loadamberparams frcmod.ions1lm_126_tip3p",
         f"set default PBRadii {radii_set}",
         f"loadamberparams {data_dir_host}/{host_prefix}.frcmod",
         f"{host_prefix} = loadmol2 {data_dir_host}/{host_prefix}.mol2",
         f"loadamberparams {data_dir_guest}/{guest_prefix}.frcmod",
         f"{guest_prefix} = loadmol2 {data_dir_guest}/{guest_prefix}.mol2",
-        f"model = loadpdb {data_dir_guest}/{host_prefix}-{guest_prefix}.pdb",
+        f"model = loadpdb {data_dir_guest}/{COMPLEX}.pdb",
         "check model",
         "savepdb model vac.pdb",
         "saveamberparm model vac.prmtop vac.rst7",
@@ -49,7 +72,7 @@ def build_system( data_dir_host, data_dir_guest, host_prefix = "BCD", guest_pref
 # --- Align the pulling axis and add dummy atoms ---
 # Orientation 1: C3 leads (faces away from host opening during pull).
 
-def guest_masks(b1_idx, b2_idx, guest_prefix="UNL"):
+def guest_masks(b1_idx, b2_idx, guest_prefix=GUEST):
     s = pmd.load_file("complex/vac.prmtop", "complex/vac.rst7", structure=True)
     guest_atoms = [a for a in s.atoms if a.residue.name == guest_prefix]
     G1 = f":{guest_prefix}@{guest_atoms[b1_idx].idx + 1}"
@@ -57,16 +80,16 @@ def guest_masks(b1_idx, b2_idx, guest_prefix="UNL"):
     return G1, G2
 
 
-def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_prefix="UNL", radii_set = "mbondi3"): 
+def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix=HOST, guest_prefix=GUEST, radii_set=RADII):
     structure = pmd.load_file("complex/vac.prmtop", "complex/vac.rst7", structure=True)
     aligned = align.zalign(structure, G1, G2)
     aligned.save("complex/aligned.prmtop", overwrite=True)
     aligned.save("complex/aligned.rst7", overwrite=True)
 
     structure = pmd.load_file("complex/aligned.prmtop", "complex/aligned.rst7", structure=True)
-    structure = dummy.add_dummy(structure, residue_name="DM1", z=-6.0)
-    structure = dummy.add_dummy(structure, residue_name="DM2", z=-9.0)
-    structure = dummy.add_dummy(structure, residue_name="DM3", z=-11.2, y=2.2)
+    structure = dummy.add_dummy(structure, residue_name="DM1", z=DUMMY_Z[0])
+    structure = dummy.add_dummy(structure, residue_name="DM2", z=DUMMY_Z[1])
+    structure = dummy.add_dummy(structure, residue_name="DM3", z=DUMMY_Z[2], y=DUMMY3_Y)
     structure.save("complex/aligned_with_dummy.prmtop", overwrite=True)
     structure.save("complex/aligned_with_dummy.rst7", overwrite=True)
     structure.save("complex/aligned_with_dummy.pdb", overwrite=True)
@@ -82,7 +105,7 @@ def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_pr
     system.pbc_type = None
     system.neutralize = False
     system.template_lines = [
-        "source leaprc.gaff",
+        f"source leaprc.{ATOM_TYPE}",
         "loadamberparams frcmod.ions1lm_126_tip3p",
         f"set default PBRadii {radii_set}",
         f"loadamberparams {data_dir_host}/{host_prefix}.frcmod",
@@ -95,26 +118,24 @@ def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix="BCD", guest_pr
         "DM3 = loadmol2 dm3.mol2",
         "model = loadpdb aligned_with_dummy.pdb",
         "check model",
-        f"savepdb model {host_prefix}-{guest_prefix}-dum.pdb",
-        f"saveamberparm model {host_prefix}-{guest_prefix}-dum.prmtop {host_prefix}-{guest_prefix}-dum.rst7",
+        f"savepdb model {COMPLEX}-dum.pdb",
+        f"saveamberparm model {COMPLEX}-dum.prmtop {COMPLEX}-dum.rst7",
     ]
     system.build()
     return
 
 def window_setup():
-    attach_string = "0.00 0.01 0.0375 0.40 0.80 1.60 2.40 4.00 5.50 8.65 11.80 18.10 24.40 37.00 49.60 74.80 100.00"
-    attach_fractions = [float(i) / 100 for i in attach_string.split()]
-    initial_distance = 6.0
-    pull_distances = np.arange(initial_distance, 14.5 + initial_distance, 0.5)
+    attach_fractions = get_attach_fractions()
+    pull_distances = get_pull_distances()
     release_fractions = []
     windows = [len(attach_fractions), len(pull_distances), len(release_fractions)]
     return windows, attach_fractions
 
-def set_restraints(G1, G2, host_prefix= "BCD", guest_prefix="UNL"):
+def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
 
     windows, attach_fractions= window_setup()
 
-    H = [f":{host_prefix}@75", f":{host_prefix}@33", f":{host_prefix}@138"]
+    H = [f":{host_prefix}@{n}" for n in HOST_ANCHOR_ATOMS]
     H1, H2 = [], []
     for i in range(7):
         if i == 6:
@@ -126,17 +147,17 @@ def set_restraints(G1, G2, host_prefix= "BCD", guest_prefix="UNL"):
 
     D1, D2, D3 = ":DM1", ":DM2", ":DM3"
 
-    structure = pmd.load_file(f"complex/{host_prefix}-{guest_prefix}-dum.prmtop", f"complex/{host_prefix}-{guest_prefix}-dum.rst7")
+    structure = pmd.load_file(f"complex/{COMPLEX}-dum.prmtop", f"complex/{COMPLEX}-dum.rst7")
 
     # Static restraints keep host in a fixed position/orientation throughout all windows.
     static_restraints = []
     for masks, fc in [
-        ([D1, H[0]], 10.0),
-        ([D2, D1, H[0]], 100.0),
-        ([D3, D2, D1, H[0]], 100.0),
-        ([D1, H[0], H[1]], 100.0),
-        ([D2, D1, H[0], H[1]], 100.0),
-        ([D1, H[0], H[1], H[2]], 100.0),
+        ([D1, H[0]], STATIC_FC[0]),
+        ([D2, D1, H[0]], STATIC_FC[1]),
+        ([D3, D2, D1, H[0]], STATIC_FC[2]),
+        ([D1, H[0], H[1]], STATIC_FC[3]),
+        ([D2, D1, H[0], H[1]], STATIC_FC[4]),
+        ([D1, H[0], H[1], H[2]], STATIC_FC[5]),
     ]:
         static_restraints.append(
             restraints.static_DAT_restraint(
@@ -153,7 +174,7 @@ def set_restraints(G1, G2, host_prefix= "BCD", guest_prefix="UNL"):
                 restraint_mask_list=masks,
                 num_window_list=windows,
                 ref_structure=structure,
-                force_constant=10.0,
+                force_constant=CONF_FC,
                 amber_index=True,
             )
         )
@@ -162,9 +183,9 @@ def set_restraints(G1, G2, host_prefix= "BCD", guest_prefix="UNL"):
     # pull translates the guest, release lowers force constants analytically.
     guest_restraints = []
     for mask1, mask2, mask3, attach_tgt, attach_fc, pull_tgt in [
-        (D1,  G1,   None,  6.0,   10.0,  20.0),   # distance (Å, kcal/mol/Å²)
-        (D2,  D1,   G1,    180.0, 100.0, 180.0),   # angle (deg, kcal/mol/rad²)
-        (D1,  G1,   G2,    180.0, 100.0, 180.0),   # torsion
+        (D1,  G1,   None,  INITIAL_DISTANCE, DIST_FC, FINAL_DISTANCE),   # distance (Å, kcal/mol/Å²)
+        (D2,  D1,   G1,    ANGLE_TARGET, ANGLE_FC, ANGLE_TARGET),   # angle (deg, kcal/mol/rad²)
+        (D1,  G1,   G2,    TORSION_TARGET, TORSION_FC, TORSION_TARGET),   # torsion
     ]:
         r = restraints.DAT_restraint()
         r.mask1 = mask1
@@ -201,7 +222,7 @@ def set_restraints(G1, G2, host_prefix= "BCD", guest_prefix="UNL"):
 
     return guest_restraints
 
-def create_windows(G1, G2, host_prefix='BCD', guest_prefix='UNL'):
+def create_windows(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
 
     guest_restraints = set_restraints(G1,G2, host_prefix, guest_prefix)
 
@@ -209,10 +230,10 @@ def create_windows(G1, G2, host_prefix='BCD', guest_prefix='UNL'):
 
     for window in window_list:
         if window[0] == "a":
-            shutil.copy(f"complex/{host_prefix}-{guest_prefix}-dum.prmtop", f"windows/{window}/{host_prefix}-{guest_prefix}-dum.prmtop")
-            shutil.copy(f"complex/{host_prefix}-{guest_prefix}-dum.rst7", f"windows/{window}/{host_prefix}-{guest_prefix}-dum.rst7")
+            shutil.copy(f"complex/{COMPLEX}-dum.prmtop", f"windows/{window}/{COMPLEX}-dum.prmtop")
+            shutil.copy(f"complex/{COMPLEX}-dum.rst7", f"windows/{window}/{COMPLEX}-dum.rst7")
         elif window[0] == "p":
-            s = pmd.load_file(f"complex/{host_prefix}-{guest_prefix}-dum.prmtop", f"complex/{host_prefix}-{guest_prefix}-dum.rst7", structure=True)
+            s = pmd.load_file(f"complex/{COMPLEX}-dum.prmtop", f"complex/{COMPLEX}-dum.rst7", structure=True)
             target_diff = (
                 guest_restraints[0].phase["pull"]["targets"][int(window[1:])]
                 - guest_restraints[0].pull["target_initial"]
@@ -221,12 +242,12 @@ def create_windows(G1, G2, host_prefix='BCD', guest_prefix='UNL'):
             for atom in s.atoms:
                 if atom.residue.name == guest_prefix.upper():
                     atom.xz += target_diff.magnitude
-            s.save(f"windows/{window}/{host_prefix}-{guest_prefix}-dum.prmtop", overwrite=True)
-            s.save(f"windows/{window}/{host_prefix}-{guest_prefix}-dum.rst7", overwrite=True)
+            s.save(f"windows/{window}/{COMPLEX}-dum.prmtop", overwrite=True)
+            s.save(f"windows/{window}/{COMPLEX}-dum.rst7", overwrite=True)
 
     return
 
-def setup_datapoint(dp, data_dir_host, b1_idx, b2_idx, host_prefix="BCD", guest_prefix="UNL"):
+def setup_datapoint(dp, data_dir_host, b1_idx, b2_idx, host_prefix=HOST, guest_prefix=GUEST):
     old = os.getcwd()
     os.chdir(dp)
     try:
