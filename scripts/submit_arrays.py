@@ -107,7 +107,7 @@ def estimate_hours(n_windows, package):
 
 def sbatch(name, limit, cpus, mem_flag, stage_args, array=None, dependency=None):
     """array = (size, offset) or None; stage_args = what job_array.slurm gets."""
-    cmd = ["sbatch", "--parsable", f"--job-name=apr_{name}", f"--time={limit}",
+    cmd = ["sbatch", "--parsable","--ntasks=1", f"--job-name=apr_{name}", f"--time={limit}",
            f"--cpus-per-task={cpus}", mem_flag, f"--chdir={script_dir}"]
     if SL.get("partition"):
         cmd.append(f"--partition={SL['partition']}")
@@ -129,7 +129,14 @@ def run_sbatch(cmd, do_submit, placeholder):
     print("    " + shlex.join(cmd))
     if not do_submit:
         return placeholder
-    job_id = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip().split(";")[0]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode:
+        if result.stderr:
+            print(result.stderr.rstrip(), file=sys.stderr)
+        if result.stdout:
+            print(result.stdout.rstrip(), file=sys.stderr)
+        raise SystemExit(result.returncode)
+    job_id = result.stdout.strip().split(";")[0]
     print(f"    -> submitted as job {job_id}")
     return job_id
 
@@ -172,8 +179,8 @@ def submit_sim(window_list, package, do_submit, stamp, show_hint=True):
 def points_resources(stage):
     """(cpus, memory flag) of the stages that work on whole data points."""
     if stage == "setup":
-        return SL["setup_cpus"], f"--mem={SL['setup_mem']}"
-    return 1, f"--mem={SL['analysis_mem']}"
+        return SL["setup_cpus"], f"--mem-per-cpu={SL['setup_mem']}"
+    return 1, f"--mem-per-cpu={SL['analysis_mem']}"
 
 
 def points_time(stage, per_task):
@@ -206,7 +213,7 @@ def submit_points(stage, names, per_task, dependency, do_submit, stamp):
 
 def submit_collect(dependency, do_submit):
     print("\n[collect] results.csv is built when the analysis has ended")
-    cmd = sbatch("collect", "00:10:00", 1, "--mem=2G", ["collect"], dependency=dependency)
+    cmd = sbatch("collect", "00:10:00", 1, "--mem-per-cpu=1G", ["collect"], dependency=dependency)
     run_sbatch(cmd, do_submit, "<collect_job>")
 
 
