@@ -14,7 +14,7 @@ import sys
 import os
 import xml.etree.ElementTree as ET
 
-from APR.apr_refactor.apr_pipeline.apr_config import CFG
+from apr_config import CFG
 
 
 def main():

@@ -57,6 +57,7 @@ def _validate(cfg):
     need(s["sim_cpus"] >= 1 and s["sim_windows_per_cpu"] >= 1, "slurm.sim_cpus and sim_windows_per_cpu must be >= 1")
     need(s["sim_task_hours"] > 0 and s["sim_minutes_per_window"] > 0, "slurm.sim_task_hours and sim_minutes_per_window must be > 0")
     need(s["analysis_data_points_per_task"] >= 1, "slurm.analysis_data_points_per_task must be >= 1")
+    need(s["setup_data_points_per_task"] >= 1 and s["setup_cpus"] >= 1, "slurm.setup_data_points_per_task and setup_cpus must be >= 1")
     need(an["method"] in METHODS, f"analysis.method must be one of {list(METHODS)}")
     need(r["pmemd"] in PMEMD_KINDS, f"run.pmemd must be one of {list(PMEMD_KINDS)}")
     _radii_for(cfg)

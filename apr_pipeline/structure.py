@@ -35,7 +35,7 @@ from scipy.spatial.distance import cdist
 from pathlib import Path
 import argparse
 
-from APR.apr_refactor.apr_pipeline.apr_config import CFG
+from apr_config import CFG
 
 
 

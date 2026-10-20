@@ -1,6 +1,6 @@
 import subprocess
 
-from APR.apr_refactor.apr_pipeline.apr_config import CFG
+from apr_config import CFG
 
 def parametrize(data_dir, guest_pdb=f'{CFG["naming"]["guest_prefix"]}.pdb', guest_prefix=CFG["naming"]["guest_prefix"]):
     result = subprocess.run(

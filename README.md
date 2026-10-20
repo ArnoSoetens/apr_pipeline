@@ -3,9 +3,11 @@
 ```
 project/
 ├── config.toml            <- the one file you edit
-├── apr_pipeline/          python modules (apr_config.py reads config.toml)
+├── apr_pipeline/          python modules (apr_config.py reads config.toml;
+│                          datapoints.py knows the state of each data point)
 ├── scripts/
 │   ├── main.py            setup: isomers -> structure -> placement -> parametrize -> APR windows
+│   │                      (serial: python main.py;  or per data point name, as array tasks do)
 │   ├── analysis.py        free energies -> results.csv
 │   ├── run.sh             runs all windows (pmemd choice + .in values come from config.toml)
 │   ├── open_windows.sh    cpptraj + VMD:  ./open_windows.sh iso_00001 a000-a005
@@ -30,6 +32,22 @@ Not in the config on purpose: the `#SBATCH` lines (sbatch reads them before anyt
 the BCD-specific per-glucose restraint atom numbers in `apr_setup.set_restraints`,
 and the output file names inside `run.sh` (production.nc, ...).
 
+## Setup: serial or as an array
+
+```
+python scripts/main.py                   # serial: folders from the XML, then every data point that needs setup
+python scripts/main.py --force           # ... also redo the complete ones
+python scripts/main.py iso_00001 iso_00002   # just these (what an array task does)
+
+python apr_pipeline/create_data_directories.py        # array mode: make the folders first (quick)
+python scripts/submit_arrays.py setup --submit        # one array task = a few data points (slurm.setup_*)
+python scripts/submit_arrays.py setup --retry-failed --submit
+```
+
+* A data point that fails gets `setup_failed.txt` with the reason (shown by `status`); success removes it.
+  The `setup` array leaves failed data points out unless you pass `--retry-failed`.
+* Wait for the setup array to finish before `sim`: the simulation list is made from the windows setup creates.
+
 ## Slurm arrays
 
 ```
@@ -38,12 +56,6 @@ python scripts/submit_arrays.py all               # shows the sbatch commands, s
 python scripts/submit_arrays.py all --submit      # simulation arrays -> analysis array -> results.csv
 python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller packages for a small job
 ```
-
-The commands shown without `--submit` are previews: they do not create the worklist files those
-commands reference. Submit through `submit_arrays.py ... --submit` so it writes each worklist
-before calling `sbatch`. `job_array.slurm` does not need `#SBATCH` lines; the launcher passes
-Slurm options (including the required task count) directly to `sbatch`. Memory requests use
-`--mem-per-cpu`, as required by the target cluster.
 
 * Every window that still has to be simulated goes into one list (`iso_00001/a000`, ...).
   The list is cut into work packages of `slurm.sim_cpus x slurm.sim_windows_per_cpu` windows

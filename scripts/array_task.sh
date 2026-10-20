@@ -1,5 +1,6 @@
 #!/bin/bash
 # What ONE slurm array task does.
+#   array_task.sh setup <worklist> <points_per_task> [offset]     worklist lines: iso_00001
 #   array_task.sh sim <worklist> <windows_per_task> [offset]      worklist lines: iso_00001/a000
 #   array_task.sh analysis <worklist> <points_per_task> [offset]  worklist lines: iso_00001
 #   array_task.sh collect
@@ -18,10 +19,6 @@ if [ "$STAGE" = "collect" ]; then
 fi
 
 WORKLIST="${2:?worklist file}"
-if [[ ! -f "$WORKLIST" || ! -r "$WORKLIST" ]]; then
-    echo "worklist is missing or unreadable: $WORKLIST" >&2
-    exit 1
-fi
 PER_TASK="${3:?items per task}"
 OFFSET="${4:-0}"          # when the list needs several arrays, each one has its own offset
 TASK_ID=$(( ${SLURM_ARRAY_TASK_ID:?this must run inside a slurm array} + OFFSET ))
@@ -36,6 +33,9 @@ if [ "${#POINTS[@]}" -eq 0 ]; then
 fi
 
 case "$STAGE" in
+    setup)
+        python "$SCRIPT_DIR/main.py" "${POINTS[@]}"
+        ;;
     sim)
         bash "$SCRIPT_DIR/run.sh" "${POINTS[@]}"
         ;;

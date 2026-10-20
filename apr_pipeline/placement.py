@@ -28,7 +28,7 @@ import numpy as np
 from rdkit import Chem
 from scipy.spatial.distance import cdist
 
-from APR.apr_refactor.apr_pipeline.apr_config import CFG
+from apr_config import CFG
 
 __all__ = [
     "rotation_matrix_from_vectors",

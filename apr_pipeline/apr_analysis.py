@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from paprika import analysis
 from paprika.io import load_restraints
 
-from APR.apr_refactor.apr_pipeline.apr_config import CFG, get_attach_fractions, get_pull_distances, get_method
+from apr_config import CFG, get_attach_fractions, get_pull_distances, get_method
 
 # --- values from config.toml ---
 COMPLEX = CFG["naming"]["complex_prefix"]

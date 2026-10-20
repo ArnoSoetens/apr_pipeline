@@ -15,7 +15,7 @@ data      = "data"                   # data point folders (iso_00001, ...) are c
 host      = "data"                   # folder holding BCD.pdb, BCD.mol2, BCD.frcmod
 scripts   = "scripts"
 pipeline  = "apr_pipeline"           # the python modules
-input_xml = "data/new_test.xml"    # enumerator output read by create_data_directories.py
+input_xml = "data/data_input.xml"    # enumerator output read by create_data_directories.py
 templates = "scripts/templates"      # Amber .in templates ($placeholders)
 inputs    = "scripts/inputs"         # rendered .in files, written by make_inputs.py
 logs      = "logs"                   # slurm output files and the worklists of submitted arrays
@@ -39,12 +39,12 @@ uff_max_iters = 1000
 [placement]                  # guest placement in the host cavity
 cavity_center = [0.0, 0.0, 0.0]   # the midpoint of the guest backbone goes here
 cavity_axis   = [0.0, 0.0, 1.0]   # the guest backbone is aligned with this axis
-clash_cutoff  = 1               # Angstrom; a closer host-guest pair rejects the guest
+clash_cutoff  = 1.5               # Angstrom; a closer host-guest pair rejects the guest
 guest_resnum  = 2                 # residue number of the guest in the PDB files
 
 # ---------------------------------------------------------------------------
 [parametrize]                # antechamber / parmchk2
-net_charge    = 0
+net_charge    = -1
 charge_method = "bcc"
 atom_type     = "gaff"       # antechamber -at, and leaprc.<atom_type> in tleap
 parmchk_set   = 2            # parmchk2 -s  (1 = gaff, 2 = gaff2)
@@ -103,20 +103,27 @@ restart_every    = 5000        # ntwr
 
 # ---------------------------------------------------------------------------
 [slurm]                      # used by scripts/submit_arrays.py
-partition      = "compute-p1, compute-p2"
+partition      = "compute"
 account        = "research-me-pe"
 max_running    = 64          # array tasks running at the same time (the cluster allows 64 running jobs per user)
 max_array_size = 1000        # tasks per array (cluster maximum: 1001); more tasks are split over several arrays
 
 # Simulation: every window that still has to be simulated goes into ONE list. The list is cut into
 # work packages; one array task runs one package on sim_cpus CPUs, one window per CPU at a time.
-sim_cpus               = 1      # CPUs requested per task
-sim_windows_per_cpu    = 2     # work package = sim_cpus x this:  6 CPUs -> 270 windows, 4 CPUs -> 180 windows
+sim_cpus               = 6      # CPUs requested per task
+sim_windows_per_cpu    = 45     # work package = sim_cpus x this:  6 CPUs -> 270 windows, 4 CPUs -> 180 windows
 sim_task_hours         = 4      # time limit of a task (45 windows x ~5 min = 3.75 h)
 sim_minutes_per_window = 5      # only for estimates, and for the time limit of small packages
-sim_mem_per_cpu        = "1G"
+sim_mem_per_cpu        = "2G"
+
+# Setup (scripts/main.py): one core per task, a few data points per task.
+# The minutes are a first guess: look at the first setup logs and adjust.
+setup_cpus                   = 1
+setup_mem                    = "4G"
+setup_data_points_per_task   = 20
+setup_minutes_per_data_point = 3
 
 # Analysis: one core per task, a few data points per task
 analysis_data_points_per_task   = 5
 analysis_minutes_per_data_point = 2
-analysis_mem                    = "1G"      # requested with --mem-per-cpu
+analysis_mem                    = "8G"
