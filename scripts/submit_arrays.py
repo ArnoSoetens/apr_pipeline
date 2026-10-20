@@ -4,7 +4,7 @@
     python submit_arrays.py status                 # what is finished and what is left
     python submit_arrays.py setup --submit         # main.py for the data points that need it
     python submit_arrays.py all                    # show what would be submitted (nothing is submitted)
-    python submit_arrays.py all --submit           # simulations -> analysis -> results.csv
+    python submit_arrays.py all --submit           # setup -> simulations -> analysis -> results.csv
     python submit_arrays.py sim --submit           # only the simulations
     python submit_arrays.py analysis --submit      # only the analysis
 
@@ -12,8 +12,8 @@ Setup
     If no data point folders exist yet, they are created from the XML automatically. Data points
     without complete windows are cut into tasks of a few data points; each task runs main.py for its
     data points. A failed data point gets a setup_failed.txt and is left out next time (--retry-failed).
-    Run 'setup' first and wait for it: the simulation list is made from the windows setup creates.
-    (Setting up serially is also possible: python scripts/main.py)
+    The 'all' command chains setup, simulations, analysis and collection. Setting up serially is
+    also possible: python scripts/main.py.
 Simulation
     Every window that still has to be simulated goes into ONE list (lines like iso_00001/a000).
     The list is cut into work packages of  sim_cpus x sim_windows_per_cpu  windows. One array task
@@ -44,7 +44,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 
 from apr_config import CFG
-from datapoints import DATA, data_points, failure_reason, scan
+from datapoints import DATA, WINDOWS, data_points, failure_reason, scan
 
 LOGS = Path(CFG["directories"]["logs"])
 SL = CFG["slurm"]
@@ -160,7 +160,7 @@ def run_sbatch(cmd, do_submit, placeholder):
 # The stages
 # ---------------------------------------------------------------------------
 
-def submit_sim(window_list, package, do_submit, stamp, show_hint=True):
+def submit_sim(window_list, package, do_submit, stamp, show_hint=True, dependency=None):
     n = len(window_list)
     tasks = math.ceil(n / package)
     arrays = split_arrays(tasks, SL["max_array_size"])
@@ -186,7 +186,7 @@ def submit_sim(window_list, package, do_submit, stamp, show_hint=True):
     for k, (offset, size) in enumerate(arrays):
         print(f"  array {k + 1}/{len(arrays)}: tasks {offset}-{offset + size - 1}")
         cmd = sbatch("sim", limit, SL["sim_cpus"], f"--mem-per-cpu={SL['sim_mem_per_cpu']}",
-                     ["sim", worklist, package, offset], array=(size, offset))
+                     ["sim", worklist, package, offset], array=(size, offset), dependency=dependency)
         ids.append(run_sbatch(cmd, do_submit, f"<sim_job_{k + 1}>"))
     return ids
 
@@ -278,21 +278,32 @@ def main():
         st, left = scan(dp)
         if st == "needs_simulation":
             window_list += [f"{dp.name}/{w}" for w in left]
-            if args.command == "all":          # these will need the analysis too
+            if args.command == "all":
                 analysis_names.append(dp.name)
         elif st == "needs_analysis":
             analysis_names.append(dp.name)
         elif st in ("no_windows", "setup_incomplete"):
             setup_names.append(dp.name)
+            if args.command == "all":
+                window_list.extend(f"{dp.name}/{window}" for window in WINDOWS)
+                analysis_names.append(dp.name)
         elif st == "setup_failed":
             failed_names.append(dp.name)
-    if args.command in ("sim", "analysis", "all"):
+            if args.command == "all" and args.retry_failed:
+                setup_names.append(dp.name)
+                window_list.extend(f"{dp.name}/{window}" for window in WINDOWS)
+                analysis_names.append(dp.name)
+    if args.command in ("sim", "analysis"):
         left_out = setup_names + failed_names
         if left_out:
             print(f"note: {len(left_out)} data point(s) without complete windows are left out "
                   f"(e.g. {', '.join(left_out[:3])}); run 'setup' first or see 'status'")
+    elif args.command == "all" and failed_names and not args.retry_failed:
+        print(f"note: {len(failed_names)} setup-failed data point(s) are left out "
+              f"(e.g. {', '.join(failed_names[:3])}); --retry-failed includes them")
 
     stamp = time.strftime("%Y%m%d_%H%M%S")
+    setup_ids = None
     if args.command == "setup":
         names = setup_names + (failed_names if args.retry_failed else [])
         if names:
@@ -305,21 +316,32 @@ def main():
         if failed_names and not args.retry_failed:
             print(f"note: {len(failed_names)} data point(s) failed earlier and are left out "
                   f"(e.g. {', '.join(failed_names[:3])}); --retry-failed includes them")
+    elif args.command == "all":
+        if setup_names:
+            setup_ids = [submit_points(
+                "setup", sorted(set(setup_names)),
+                args.points_per_task or SL["setup_data_points_per_task"],
+                None, args.submit, stamp,
+            )]
+        else:
+            print("\n[setup] nothing to set up")
 
     sim_ids = None
     if args.command in ("sim", "all"):
         if window_list:
             package = args.windows_per_task or default_package()
             sim_ids = submit_sim(window_list, package, args.submit, stamp,
-                                 show_hint=args.windows_per_task is None)
+                                 show_hint=args.windows_per_task is None,
+                                 dependency=setup_ids)
         else:
             print("\n[sim] nothing to simulate")
 
     if args.command in ("analysis", "all"):
         if analysis_names:
+            dependencies = sim_ids if sim_ids is not None else setup_ids
             job = submit_points("analysis", sorted(set(analysis_names)),
                                   args.points_per_task or SL["analysis_data_points_per_task"],
-                                  sim_ids, args.submit, stamp)
+                                  dependencies, args.submit, stamp)
             submit_collect([job], args.submit)
         else:
             print("\n[analysis] nothing to analyze")

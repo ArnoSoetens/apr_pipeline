@@ -52,8 +52,8 @@ python scripts/submit_arrays.py setup --retry-failed --submit
 
 ```
 python scripts/submit_arrays.py status            # what is finished, what is left
-python scripts/submit_arrays.py all               # shows the sbatch commands, submits nothing
-python scripts/submit_arrays.py all --submit      # simulation arrays -> analysis array -> results.csv
+python scripts/submit_arrays.py all               # shows setup -> sim -> analysis -> collection commands
+python scripts/submit_arrays.py all --submit      # submits setup -> simulation -> analysis -> results.csv
 python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller packages for a small job
 ```
 
@@ -67,6 +67,8 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   tasks start at once and the job finishes much sooner.
 * The analysis array starts when all simulation arrays have ended (`afterany`) and skips data points
   whose windows are not all finished. `collect_results.py` then writes `results.csv`.
+* `all` includes data points that need setup, and submits the later stages with Slurm dependencies.
+  Previously failed setup points are left out unless `--retry-failed` is passed.
 * Windows simulated before the markers existed: if you know they are complete,
   `for w in data/*/windows/*/; do touch "${w}production2.done"; done` marks them
   (a plain `touch data/*/windows/*/production2.done` does NOT work: the `*` only matches files that already exist).

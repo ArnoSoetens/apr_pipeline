@@ -120,8 +120,8 @@ sim_mem_per_cpu        = "1G"
 # The minutes are a first guess: look at the first setup logs and adjust.
 setup_cpus                   = 1
 setup_mem                    = "1G"
-setup_data_points_per_task   = 20
-setup_minutes_per_data_point = 3
+setup_data_points_per_task   = 1
+setup_minutes_per_data_point = 2
 
 # Analysis: one core per task, a few data points per task
 analysis_data_points_per_task   = 5
