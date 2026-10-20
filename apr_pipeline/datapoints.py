@@ -20,7 +20,7 @@ FAILED_FILE = "setup_failed.txt"
 SETUP_STATES = ("no_windows", "setup_incomplete", "setup_failed")     # setup has to be (re)done
 
 # window folder names: a000 ... (attach) and p000 ... (pull)
-WINDOWS = ([f"a{i:03d}" for i in range(len(get_attach_fractions()))]
+WINDOWS = ([f"a{i:03d}" for i in range(len(get_attach_fractions())-1)] # the last attach window is the first pull window
            + [f"p{i:03d}" for i in range(len(get_pull_distances()))])
 
 
