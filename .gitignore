@@ -24,4 +24,5 @@ env/
 EOF
 
 *.mjs
+**/scripts/main_begin_with_files.py
 
