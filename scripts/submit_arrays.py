@@ -44,7 +44,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 
 from apr_config import CFG
-from datapoints import DATA, WINDOWS, data_points, failure_reason, scan
+from datapoints import DATA, FAILED_FILE, WINDOWS, data_points, failure_reason, scan
 
 LOGS = Path(CFG["directories"]["logs"])
 SL = CFG["slurm"]
@@ -276,7 +276,14 @@ def main():
     window_list, analysis_names, setup_names, failed_names = [], [], [], []
     for dp in dps:
         st, left = scan(dp)
-        if st == "needs_simulation":
+        has_failed_marker = (dp / FAILED_FILE).exists()
+        if has_failed_marker:
+            failed_names.append(dp.name)
+            if args.command == "all" and args.retry_failed:
+                setup_names.append(dp.name)
+                window_list.extend(f"{dp.name}/{window}" for window in WINDOWS)
+                analysis_names.append(dp.name)
+        elif st == "needs_simulation":
             window_list += [f"{dp.name}/{w}" for w in left]
             if args.command == "all":
                 analysis_names.append(dp.name)
@@ -289,10 +296,6 @@ def main():
                 analysis_names.append(dp.name)
         elif st == "setup_failed":
             failed_names.append(dp.name)
-            if args.command == "all" and args.retry_failed:
-                setup_names.append(dp.name)
-                window_list.extend(f"{dp.name}/{window}" for window in WINDOWS)
-                analysis_names.append(dp.name)
     if args.command in ("sim", "analysis"):
         left_out = setup_names + failed_names
         if left_out:
