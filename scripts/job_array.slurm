@@ -1,9 +1,14 @@
 #!/bin/bash
-# Shared by all array jobs. There are no #SBATCH lines on purpose: submit_arrays.py passes
-# partition, account, time, cores, memory and the array range from config.toml.
+# Shared by all array jobs. submit_arrays.py passes Slurm resources and stage arguments.
 #   job_array.slurm setup|sim|analysis <worklist> <items_per_task> [offset]
 #   job_array.slurm collect
-set -e
+set -euo pipefail
+
+ENV_DIR="$HOME/opt/miniforge3/envs/paprika"
+AMBERTOOLS_HOME="$HOME/opt/amber26/install"
+
+# Spread array-task startup to reduce simultaneous shared-filesystem load.
+sleep $(( RANDOM % 30 ))
 
 # -------------------------------
 # DelftBlue modules
@@ -19,25 +24,54 @@ module load cuda/12.5
 module load bzip2/1.0.8
 
 # -------------------------------
-# pAPRika conda environment
+# pAPRika environment (PATH approach)
 # -------------------------------
+if [ ! -d "$ENV_DIR" ]; then
+    echo "ERROR: environment folder not found: $ENV_DIR" >&2
+    exit 1
+fi
+export PATH="$ENV_DIR/bin:$PATH"
 
-unset CONDA_SHLVL
-source ~/opt/miniforge3/etc/profile.d/conda.sh
-conda activate paprika
+# Retry the Python environment check in case the shared filesystem is slow.
+wait_for_python() {
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if python -c "import numpy, tomllib" 2>/dev/null; then
+            return 0
+        fi
+        echo "Python environment not ready (attempt $attempt of 5); retrying" >&2
+        sleep $(( RANDOM % 20 + 5 ))
+    done
 
+    echo "ERROR: Python environment is not usable on $(hostname)" >&2
+    return 1
+}
+wait_for_python
 
 # -------------------------------
 # AmberTools26
 # -------------------------------
-source ~/opt/amber26/install/amber.sh
-export PYTHONPATH="$HOME/opt/amber26/install/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+source "$AMBERTOOLS_HOME/amber.sh"
 
-# one thread per process: the parallelism comes from running many processes
+# The antechamber wrapper needs AMBERHOME to locate wrapped_progs.
+# The successful conda-activation test showed this should be the paprika env.
+export AMBERHOME="$ENV_DIR"
+export PATH="$AMBERTOOLS_HOME/bin:$ENV_DIR/bin:$PATH"
+export PYTHONPATH="$AMBERTOOLS_HOME/lib/python3.11/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 export OMP_NUM_THREADS=1
 
-echo "===== $(date '+%F %T') on $(hostname), $1 ====="
-which python pmemd
+if [ ! -x "$AMBERHOME/bin/wrapped_progs/antechamber" ]; then
+    echo "ERROR: expected antechamber program not found at:" >&2
+    echo "  $AMBERHOME/bin/wrapped_progs/antechamber" >&2
+    exit 1
+fi
 
-# submit_arrays.py starts the job in the scripts folder (--chdir), so $PWD is the scripts folder
+echo "===== $(date '+%F %T') on $(hostname), stage: $1 ====="
+echo "AMBERHOME=$AMBERHOME"
+command -v python
+command -v antechamber
+command -v sqm
+command -v pmemd || true
+
+# submit_arrays.py sets the working directory to scripts/.
 bash "$PWD/array_task.sh" "$@"
