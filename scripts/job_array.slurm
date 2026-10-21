@@ -21,36 +21,11 @@ module load bzip2/1.0.8
 # -------------------------------
 # pAPRika conda environment
 # -------------------------------
-# Many array tasks start at the same moment, and `conda activate` starts a python that reads
-# a lot of files from the shared filesystem; some tasks failed there. So instead:
-#   1. wait a random few seconds, so tasks do not all start together
-#   2. put the environment's bin folder on PATH (conda itself is never started)
-#   3. check that its python works; if not, wait and try again a few times
-# Find ENV_DIR with `conda env list`.
-ENV_DIR="$HOME/opt/miniforge3/envs/paprika"
 
-sleep $(( RANDOM % 30 ))
+unset CONDA_SHLVL
+source ~/opt/miniforge3/etc/profile.d/conda.sh
+conda activate paprika
 
-if [ ! -d "$ENV_DIR" ]; then
-    echo "ERROR: environment folder not found: $ENV_DIR" >&2
-    exit 1
-fi
-export CONDA_PREFIX="$ENV_DIR"
-export PATH="$ENV_DIR/bin:$PATH"
-
-env_ok=0
-for attempt in 1 2 3 4 5; do
-    if python -c "import numpy, tomllib" 2>/dev/null; then
-        env_ok=1
-        break
-    fi
-    echo "python of the environment is not usable yet (attempt $attempt of 5), waiting" >&2
-    sleep $(( RANDOM % 20 + 5 ))
-done
-if [ "$env_ok" -ne 1 ]; then
-    echo "ERROR: the environment $ENV_DIR is not usable from $(hostname)" >&2
-    exit 1
-fi
 
 # -------------------------------
 # AmberTools26
