@@ -59,6 +59,7 @@ def _validate(cfg):
     need(s["analysis_data_points_per_task"] >= 1, "slurm.analysis_data_points_per_task must be >= 1")
     need(s["setup_data_points_per_task"] >= 1 and s["setup_cpus"] >= 1, "slurm.setup_data_points_per_task and setup_cpus must be >= 1")
     need(an["method"] in METHODS, f"analysis.method must be one of {list(METHODS)}")
+    need(isinstance(an["convergence_plot"], bool), "analysis.convergence_plot must be true or false")
     need(r["pmemd"] in PMEMD_KINDS, f"run.pmemd must be one of {list(PMEMD_KINDS)}")
     _radii_for(cfg)
 
@@ -67,6 +68,7 @@ def load_config(path=CONFIG_PATH):
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
 
+    cfg["analysis"].setdefault("convergence_plot", True)
     base = Path(path).resolve().parent                 # relative paths start here
     for key, value in cfg["directories"].items():
         cfg["directories"][key] = str((base / value).resolve())

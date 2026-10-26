@@ -54,7 +54,7 @@ parmchk_set   = 1            # parmchk2 -s  (1 = gaff, 2 = gaff2)
 # attach phase: percent of the final force constant, one value per window
 attach_string    = "0.00 0.01 0.0375 0.40 0.80 1.60 2.40 4.00 5.50 8.65 11.80 18.10 24.40 37.00 49.60 74.80 100.00"
 # pull phase: host-guest distance in Angstrom; windows = initial, initial+step, ... final
-initial_distance = 6.0
+initial_distance = 6.0 #APR setup will translate the complex to achieve this distance at the DM1 distance 
 final_distance   = 20.0
 step             = 0.5
 
@@ -73,8 +73,9 @@ host_conformational_fc = 10.0     # per-glucose conformational restraints
 
 # ---------------------------------------------------------------------------
 [analysis]
-enhanced         = false          # true: also write the histogram plots and a detailed results.json
-method           = "ti"           # "ti" (ti-block) or "mbar" (mbar-autoc)
+enhanced         = true          # true: also write histogram plots and coordinate metadata
+method           = "ti"           # primary plot/overall result; both TI and MBAR are analyzed
+convergence_plot = true           # write the free-energy convergence plot
 bootstrap_cycles = 1000
 trajectory       = "production.nc"   # file read from every window
 results_csv      = "results.csv"
