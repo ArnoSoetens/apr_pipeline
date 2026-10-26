@@ -21,11 +21,15 @@ Simulation
     More tasks than max_array_size are split over several arrays.
 Analysis
     The data points that are (or will be) fully simulated, a few per task. The analysis
-    starts when all simulation arrays have ended; data points with unfinished windows are skipped.
+    starts after the simulation arrays finish; data points with unfinished windows are skipped.
+    `all --batches N` runs N sequential simulation/analysis batches after one setup array.
+    Cleanup can be enabled per data point after its analysis succeeds.
 
 Options:
     --windows-per-task N    size of a simulation work package (default: sim_cpus x sim_windows_per_cpu)
     --points-per-task N     data points per setup or analysis task (default: from config.toml)
+    --batches N             `all`: sequential batch count (default: 1)
+    --clean-after-analysis   `all`: delete transient files after successful analysis
     --retry-failed          setup: include data points that failed before
     --only NAME ...         only these data points, e.g. --only iso_00001 iso_00002
 
@@ -135,7 +139,8 @@ def sbatch(name, limit, cpus, mem_flag, stage_args, array=None, dependency=None)
     else:
         cmd.append(f"--output={LOGS}/{name}_%j.out")
     if dependency:
-        cmd.append("--dependency=afterany:" + ":".join(dependency))   # afterany: also if a task failed
+        # Continue the workflow once prerequisites have ended, even if some tasks failed.
+        cmd.append("--dependency=afterany:" + ":".join(dependency))
     cmd.append(str(Path(script_dir) / "job_array.slurm"))
     return cmd + [str(a) for a in stage_args]
 
@@ -160,7 +165,8 @@ def run_sbatch(cmd, do_submit, placeholder):
 # The stages
 # ---------------------------------------------------------------------------
 
-def submit_sim(window_list, package, do_submit, stamp, show_hint=True, dependency=None):
+def submit_sim(window_list, package, do_submit, stamp, show_hint=True, dependency=None,
+               batch_number=None):
     n = len(window_list)
     tasks = math.ceil(n / package)
     arrays = split_arrays(tasks, SL["max_array_size"])
@@ -178,14 +184,16 @@ def submit_sim(window_list, package, do_submit, stamp, show_hint=True, dependenc
               f"        --windows-per-task {spread} -> {math.ceil(n / spread)} tasks, "
               f"about {estimate_hours(n, spread) * 60:.0f} min instead of {estimate_hours(n, package):.1f} h")
 
-    worklist = LOGS / f"worklist_sim_{stamp}.txt"        # new file every time: running tasks keep theirs
+    batch_suffix = f"_batch_{batch_number:02d}" if batch_number is not None else ""
+    worklist = LOGS / f"worklist_sim_{stamp}{batch_suffix}.txt"
     if do_submit:
         LOGS.mkdir(parents=True, exist_ok=True)
         worklist.write_text("\n".join(window_list) + "\n")
     ids = []
     for k, (offset, size) in enumerate(arrays):
         print(f"  array {k + 1}/{len(arrays)}: tasks {offset}-{offset + size - 1}")
-        cmd = sbatch("sim", limit, SL["sim_cpus"], f"--mem-per-cpu={SL['sim_mem_per_cpu']}",
+        job_name = f"sim_b{batch_number:02d}" if batch_number is not None else "sim"
+        cmd = sbatch(job_name, limit, SL["sim_cpus"], f"--mem-per-cpu={SL['sim_mem_per_cpu']}",
                      ["sim", worklist, package, offset], array=(size, offset), dependency=dependency)
         ids.append(run_sbatch(cmd, do_submit, f"<sim_job_{k + 1}>"))
     return ids
@@ -204,7 +212,8 @@ def points_time(stage, per_task):
     return hhmmss(per_task * SL["analysis_minutes_per_data_point"] * 2 + 5)
 
 
-def submit_points(stage, names, per_task, dependency, do_submit, stamp):
+def submit_points(stage, names, per_task, dependency, do_submit, stamp, batch_number=None,
+                  clean_after_analysis=False):
     """Array with one worklist line per data point: setup and analysis."""
     per_task = max(1, per_task)
     if math.ceil(len(names) / per_task) > SL["max_array_size"]:
@@ -217,11 +226,16 @@ def submit_points(stage, names, per_task, dependency, do_submit, stamp):
     rounds = math.ceil(tasks / SL["max_running"])
     print(f"  at most {SL['max_running']} tasks run at once -> about {rounds} round(s) of "
           f"~{per_task * SL[stage + '_minutes_per_data_point']} min if nodes are free")
-    worklist = LOGS / f"worklist_{stage}_{stamp}.txt"
+    batch_suffix = f"_batch_{batch_number:02d}" if batch_number is not None else ""
+    worklist = LOGS / f"worklist_{stage}_{stamp}{batch_suffix}.txt"
     if do_submit:
         LOGS.mkdir(parents=True, exist_ok=True)
         worklist.write_text("\n".join(names) + "\n")
-    cmd = sbatch(stage, limit, cpus, mem, [stage, worklist, per_task, 0],
+    stage_args = [stage, worklist, per_task, 0]
+    if clean_after_analysis:
+        stage_args.append("--clean-after-analysis")
+    job_name = f"{stage}_b{batch_number:02d}" if batch_number is not None else stage
+    cmd = sbatch(job_name, limit, cpus, mem, stage_args,
                  array=(tasks, 0), dependency=dependency)
     return run_sbatch(cmd, do_submit, f"<{stage}_job>")
 
@@ -255,15 +269,35 @@ def show_status(dps):
     print(f"  windows still to simulate: {windows_left}")
 
 
+def split_batches(names, batch_count):
+    """Split sorted data-point names into balanced, non-empty batches."""
+    batch_count = min(batch_count, len(names))
+    if batch_count == 0:
+        return []
+    base, remainder = divmod(len(names), batch_count)
+    batches, start = [], 0
+    for index in range(batch_count):
+        size = base + (index < remainder)
+        batches.append(names[start:start + size])
+        start += size
+    return batches
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("command", choices=["status", "setup", "sim", "analysis", "all"])
     ap.add_argument("--submit", action="store_true", help="really submit (default: only show)")
     ap.add_argument("--windows-per-task", type=int, help="size of a simulation work package")
     ap.add_argument("--points-per-task", type=int, help="data points per setup or analysis task")
+    ap.add_argument("--batches", type=int, default=1,
+                    help="all: sequential simulation/analysis batches (default: 1)")
+    ap.add_argument("--clean-after-analysis", action="store_true",
+                    help="all/analysis: clean transient files after successful analysis")
     ap.add_argument("--retry-failed", action="store_true", help="setup: include data points that failed before")
     ap.add_argument("--only", nargs="+", metavar="NAME")
     args = ap.parse_args()
+    if args.batches < 1:
+        ap.error("--batches must be at least 1")
 
     if args.command != "status":
         ensure_data_directories()
@@ -274,6 +308,12 @@ def main():
         return
 
     window_list, analysis_names, setup_names, failed_names = [], [], [], []
+    windows_by_point = {}
+
+    def add_windows(name, windows):
+        windows_by_point.setdefault(name, []).extend(windows)
+        window_list.extend(f"{name}/{window}" for window in windows)
+
     for dp in dps:
         st, left = scan(dp)
         has_failed_marker = (dp / FAILED_FILE).exists()
@@ -281,10 +321,10 @@ def main():
             failed_names.append(dp.name)
             if args.command == "all" and args.retry_failed:
                 setup_names.append(dp.name)
-                window_list.extend(f"{dp.name}/{window}" for window in WINDOWS)
+                add_windows(dp.name, WINDOWS)
                 analysis_names.append(dp.name)
         elif st == "needs_simulation":
-            window_list += [f"{dp.name}/{w}" for w in left]
+            add_windows(dp.name, left)
             if args.command == "all":
                 analysis_names.append(dp.name)
         elif st == "needs_analysis":
@@ -292,7 +332,7 @@ def main():
         elif st in ("no_windows", "setup_incomplete"):
             setup_names.append(dp.name)
             if args.command == "all":
-                window_list.extend(f"{dp.name}/{window}" for window in WINDOWS)
+                add_windows(dp.name, WINDOWS)
                 analysis_names.append(dp.name)
         elif st == "setup_failed":
             failed_names.append(dp.name)
@@ -329,22 +369,69 @@ def main():
         else:
             print("\n[setup] nothing to set up")
 
+    if args.command == "all":
+        work_points = sorted(set(analysis_names) | set(windows_by_point))
+        batches = split_batches(work_points, args.batches)
+        print(f"\n[batches] {len(work_points)} data points in {len(batches)} batch(es)")
+        setup_dependency = setup_ids or []
+        previous_analysis = None
+        package = args.windows_per_task or default_package()
+
+        for batch_number, batch_names in enumerate(batches, 1):
+            print(f"\n========== batch {batch_number}/{len(batches)} ==========")
+            batch_windows = [
+                f"{name}/{window}"
+                for name in batch_names
+                for window in windows_by_point.get(name, [])
+            ]
+            dependencies = list(setup_dependency)
+            if previous_analysis:
+                dependencies.append(previous_analysis)
+
+            if batch_windows:
+                sim_ids = submit_sim(
+                    batch_windows, package, args.submit, stamp,
+                    show_hint=args.windows_per_task is None,
+                    dependency=dependencies or None,
+                    batch_number=batch_number,
+                )
+                analysis_dependencies = sim_ids
+            else:
+                analysis_dependencies = dependencies or None
+
+            job = submit_points(
+                "analysis",
+                batch_names,
+                args.points_per_task or SL["analysis_data_points_per_task"],
+                analysis_dependencies,
+                args.submit,
+                stamp,
+                batch_number=batch_number,
+                clean_after_analysis=args.clean_after_analysis,
+            )
+            previous_analysis = job
+
+        if previous_analysis:
+            submit_collect([previous_analysis], args.submit)
+        else:
+            print("\n[all] nothing to set up, simulate or analyze")
+
     sim_ids = None
-    if args.command in ("sim", "all"):
+    if args.command == "sim":
         if window_list:
             package = args.windows_per_task or default_package()
             sim_ids = submit_sim(window_list, package, args.submit, stamp,
                                  show_hint=args.windows_per_task is None,
-                                 dependency=setup_ids)
+                                 dependency=None)
         else:
             print("\n[sim] nothing to simulate")
 
-    if args.command in ("analysis", "all"):
+    if args.command == "analysis":
         if analysis_names:
-            dependencies = sim_ids if sim_ids is not None else setup_ids
             job = submit_points("analysis", sorted(set(analysis_names)),
                                   args.points_per_task or SL["analysis_data_points_per_task"],
-                                  dependencies, args.submit, stamp)
+                                  None, args.submit, stamp,
+                                  clean_after_analysis=args.clean_after_analysis)
             submit_collect([job], args.submit)
         else:
             print("\n[analysis] nothing to analyze")

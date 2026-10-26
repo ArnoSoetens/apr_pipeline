@@ -28,6 +28,12 @@ def scan(dp):
     """(state, windows still to simulate)"""
     dp = Path(dp)
     windows = dp / "windows"
+    # Cleanup retains only the first window's topology, so recognize that analyzed state
+    # before treating the missing per-window topologies as incomplete setup.
+    if ((dp / "results.json").exists() and windows.is_dir()
+            and (windows / WINDOWS[0] / TOPOLOGY).exists()
+            and not all((windows / w / TOPOLOGY).exists() for w in WINDOWS)):
+        return "analyzed", []
     if not (windows.is_dir() and all((windows / w / TOPOLOGY).exists() for w in WINDOWS)):
         if (dp / FAILED_FILE).exists():
             return "setup_failed", []
@@ -35,7 +41,7 @@ def scan(dp):
     left = [w for w in WINDOWS if not (windows / w / MARKER).exists()]
     if left:
         return "needs_simulation", left
-    return ("analyzed" if (dp / "results.json").exists() else "needs_analysis"), []
+    return "needs_analysis", []
 
 
 def data_points(only=None):

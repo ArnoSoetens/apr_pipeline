@@ -91,16 +91,24 @@ echo "[$(date '+%H:%M:%S')] ${#WINDOWS[@]} window(s) to run, $MAX_JOBS at a time
 # All windows in one list, MAX_JOBS at a time: a free CPU takes the next window,
 # also when that window belongs to the next data point.
 running=0
+failures=0
 for window in "${WINDOWS[@]}"; do
 
-    { run_window "$window" || echo "FAILED ${window}"; } &
+    { run_window "$window" || { echo "FAILED ${window}" >&2; exit 1; }; } &
 
     running=$((running + 1))
     if [ "$running" -ge "$MAX_JOBS" ]; then
-        wait -n
+        wait -n || failures=1
         running=$((running - 1))
     fi
 done
 
-wait
+while [ "$running" -gt 0 ]; do
+    wait -n || failures=1
+    running=$((running - 1))
+done
 echo "[$(date '+%H:%M:%S')] FINISHED"
+if [ "$failures" -ne 0 ]; then
+    echo "One or more windows failed." >&2
+    exit 1
+fi

@@ -54,6 +54,8 @@ python scripts/submit_arrays.py setup --retry-failed --submit
 python scripts/submit_arrays.py status            # what is finished, what is left
 python scripts/submit_arrays.py all               # shows setup -> sim -> analysis -> collection commands
 python scripts/submit_arrays.py all --submit      # submits setup -> simulation -> analysis -> results.csv
+python scripts/submit_arrays.py all --batches 6 --submit
+python scripts/submit_arrays.py all --batches 6 --clean-after-analysis --submit
 python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller packages for a small job
 ```
 
@@ -65,12 +67,62 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
 * A finished window gets a `production2.done` file; resubmitting only puts unfinished windows in the list.
 * For a small job (few tasks) the script suggests a smaller `--windows-per-task`, because then all
   tasks start at once and the job finishes much sooner.
-* The analysis array starts when all simulation arrays have ended (`afterany`) and skips data points
-  whose windows are not all finished. `collect_results.py` then writes `results.csv`.
+* Later stages wait until prerequisite jobs have ended (`afterany`), whether they succeeded or failed.
+  This lets unrelated data points and later batches continue after a failure. Analysis skips points
+  whose windows are not all finished; failed analysis points keep their files and are omitted from
+  `results.csv`.
 * `all` includes data points that need setup, and submits the later stages with Slurm dependencies.
   Previously failed setup points are left out unless `--retry-failed` is passed.
+* `all --batches N` splits the automatically generated data-point worklist into up to N balanced,
+  non-empty batches. One setup array handles all points; each batch then runs its simulation array(s)
+  followed by its analysis array. The next batch's simulations wait for the previous batch's analysis
+  tasks to end, but still run if an analysis task fails.
+  `N=1` keeps the single-batch workflow. All windows belonging to one data point stay in the same batch.
+* `--clean-after-analysis` is opt-in. After a data point analyzes successfully, transient files are
+  removed while preserving its configured guest inputs, complex PDB, SMILES, results JSON, analysis
+  plots, the first five window trajectories, `a000`'s topology, and `windows/restraints.json`.
+  Files are deleted only within that data point's directory; directories are kept. `open_windows.sh`
+  uses the retained `a000` topology when another selected window has no local topology.
 * Windows simulated before the markers existed: if you know they are complete,
   `for w in data/*/windows/*/; do touch "${w}production2.done"; done` marks them
   (a plain `touch data/*/windows/*/production2.done` does NOT work: the `*` only matches files that already exist).
 * `run.sh` takes data point names (all their windows) or `data_point/window` pairs, and keeps
   `MAX_JOBS` windows running over data point borders; without arguments it runs every window it finds.
+
+## Analysis results and diagnostics
+
+Every analysis run computes both estimators. `results.json` always contains
+`phases.attach` and `phases.pull`. Each phase contains one `ti-block` and one
+`mbar-autoc` result, each with a single total free-energy estimate (`fe`) and
+Paprika standard error (`sem`), in kcal/mol. No per-window free energies are
+duplicated into `results.json`. TI uses Paprika's block-based TI analysis; MBAR
+uses its autocorrelation-based sampling treatment.
+The top-level `dG_bind` and `dG_sem` remain the values from the configured
+`analysis.method`, so existing summary CSVs and comparisons retain their previous
+meaning. The configured method's plot profile is still used internally to draw
+`binding_free_energy.jpg`, but its per-window values are not repeated in JSON.
+
+Every data point also gets a `convergence_plot.jpg`, with separate attach and
+pull panels. Each panel shows the TI and MBAR phase free-energy estimates at
+10%, 20%, ..., 100% of each window's trajectory frames, with Paprika's
+fraction-specific SEM as error bars. Each fraction uses the first indicated
+portion of the available frames in every window. This lets you see whether the
+estimate settles toward its full-trajectory value; it is a diagnostic, not a
+proof that the simulation has sampled all relevant states. Set
+`analysis.convergence_plot = false` in `config.toml` to skip creating this plot;
+it defaults to `true`.
+
+`attach_distance_outside_threshold` contains the fraction and percent of
+attachment distance samples satisfying
+`abs(sample - initial_distance) > 7 Å`. Values exactly 7 Å from the initial
+distance are not counted as outside. The attachment phase shares its fully
+attached endpoint with the first pulling window (`p000`), so this calculation
+uses only attachment simulation windows `a000` through `a015` and excludes the
+shared `p000` samples. The JSON lists the included windows and sample count.
+Because trajectory frames are saved at a fixed interval, the sample fraction
+is also the sampled-time fraction. Non-finite samples cause an explicit error
+instead of being silently discarded.
+
+`analysis.enhanced` continues to control the supplementary histogram plots and
+coordinate metadata in `results.json`. The convergence plot and phase estimates
+are generated regardless of that setting.

@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_ENV="$(python "$SCRIPT_DIR/config_env.py")"
 eval "$CONFIG_ENV"
 
-TOPOLOGY_GLOB="*.prmtop"
+TOPOLOGY_NAME="${COMPLEX_PREFIX}-dum.prmtop"
 
 # Trajectory to look at: analysis.trajectory in config.toml, or --traj FILE.
 
@@ -148,9 +148,12 @@ for name in "${WINDOW_NAMES[@]}"; do
         continue
     fi
 
-    TOPOLOGY="$(find "$WINDOW_DIR" -maxdepth 1 -type f -name "$TOPOLOGY_GLOB" | sort | head -n 1)"
-    if [[ -z "$TOPOLOGY" ]]; then
-        echo "Warning: skipping '$name' -- no file matching '$TOPOLOGY_GLOB'" >&2
+    TOPOLOGY="$WINDOW_DIR/$TOPOLOGY_NAME"
+    if [[ ! -f "$TOPOLOGY" ]]; then
+        TOPOLOGY="$WINDOWS_DIR/a000/$TOPOLOGY_NAME"
+    fi
+    if [[ ! -f "$TOPOLOGY" ]]; then
+        echo "Warning: skipping '$name' -- topology missing in this window and windows/a000" >&2
         continue
     fi
 

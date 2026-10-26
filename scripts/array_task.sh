@@ -2,7 +2,8 @@
 # What ONE slurm array task does.
 #   array_task.sh setup <worklist> <points_per_task> [offset]     worklist lines: iso_00001
 #   array_task.sh sim <worklist> <windows_per_task> [offset]      worklist lines: iso_00001/a000
-#   array_task.sh analysis <worklist> <points_per_task> [offset]  worklist lines: iso_00001
+#   array_task.sh analysis <worklist> <points_per_task> [offset] [--clean-after-analysis]
+#                                                               worklist lines: iso_00001
 #   array_task.sh collect
 # Task number k (array index + offset; indices start at 0) handles worklist lines k*N+1 ... k*N+N.
 set -euo pipefail
@@ -25,6 +26,7 @@ if [[ ! -f "$WORKLIST" || ! -r "$WORKLIST" ]]; then
 fi
 PER_TASK="${3:?items per task}"
 OFFSET="${4:-0}"          # when the list needs several arrays, each one has its own offset
+CLEAN_AFTER_ANALYSIS="${5:-}"
 TASK_ID=$(( ${SLURM_ARRAY_TASK_ID:?this must run inside a slurm array} + OFFSET ))
 
 START=$(( TASK_ID * PER_TASK + 1 ))
@@ -41,7 +43,22 @@ case "$STAGE" in
         python "$SCRIPT_DIR/main.py" "${POINTS[@]}"
         ;;
     sim)
-        bash "$SCRIPT_DIR/run.sh" "${POINTS[@]}"
+        READY_WINDOWS=()
+        for point in "${POINTS[@]}"; do
+            data_point="${point%%/*}"
+            window="${point#*/}"
+            window_dir="$DATA_DIR/$data_point/windows/$window"
+            if [[ "$point" != */* || ! -d "$window_dir" \
+                  || ! -f "$window_dir/${COMPLEX_PREFIX}-dum.prmtop" \
+                  || ! -f "$window_dir/${COMPLEX_PREFIX}-dum.rst7" ]]; then
+                echo "SKIP $point: window setup is incomplete"
+                continue
+            fi
+            READY_WINDOWS+=("$point")
+        done
+        if [ "${#READY_WINDOWS[@]}" -gt 0 ]; then
+            bash "$SCRIPT_DIR/run.sh" "${READY_WINDOWS[@]}"
+        fi
         ;;
     analysis)
         # only analyze data points whose windows are ALL finished
@@ -58,7 +75,11 @@ case "$STAGE" in
             fi
         done
         if [ "${#READY[@]}" -gt 0 ]; then
-            python "$SCRIPT_DIR/analysis.py" "${READY[@]}"
+            if [[ "$CLEAN_AFTER_ANALYSIS" == "--clean-after-analysis" ]]; then
+                python "$SCRIPT_DIR/analysis.py" --clean-after-analysis "${READY[@]}"
+            else
+                python "$SCRIPT_DIR/analysis.py" "${READY[@]}"
+            fi
         fi
         ;;
     *)
