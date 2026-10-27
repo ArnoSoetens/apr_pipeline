@@ -136,6 +136,22 @@ Because trajectory frames are saved at a fixed interval, the sample fraction
 is also the sampled-time fraction. Non-finite samples cause an explicit error
 instead of being silently discarded.
 
+When a two-atom distance wall is present in the attachment windows'
+`disang.rest` files, `results.json` also contains `distance_wall`. The analysis
+reconstructs the restraint potential from each sampled wall distance and its
+Amber `r1`–`r4` and `rk2`/`rk3` parameters. In the parabolic regions the Amber
+energy is `rk * (distance - boundary)²` (without a one-half factor); beyond
+`r1`/`r4`, the potential continues linearly with the boundary slope. The output
+reports the mean and maximum instantaneous potential energy, the fraction of
+frames outside the flat region, and signed net wall work from the first to last
+saved frame **for each independent window**. Positive work means the wall did
+net work on the simulated system; negative work means the system did net work
+against the wall. Because the restraint parameters are fixed during a window,
+this net work is `U(first frame) - U(last frame)`. Per-window work values are
+not summed across separate simulations. Mean potential energy is a restraint
+energy statistic, not work or a binding free-energy contribution. No
+`distance_wall` section is added when no such restraint is present.
+
 `analysis.enhanced` continues to control the supplementary histogram plots and
 coordinate metadata in `results.json`. The convergence plot and phase estimates
 are generated regardless of that setting.
