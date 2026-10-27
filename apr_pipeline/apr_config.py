@@ -3,6 +3,7 @@
 Every module does:   from apr_config import CFG
 The config file is  <project>/config.toml  unless the environment variable APR_CONFIG points elsewhere.
 """
+import math
 import os
 from pathlib import Path
 
@@ -52,6 +53,23 @@ def _validate(cfg):
     need(len(a["host_anchor_atoms"]) == 3, "apr.host_anchor_atoms needs 3 atom numbers")
     need(len(a["restraints"]["static_fc"]) == 6, "apr.restraints.static_fc needs 6 numbers")
 
+    wall = a["restraints"]["walls"]["distance"]
+    need(
+        isinstance(wall["enabled"], bool),
+        "apr.restraints.walls.distance.enabled must be true or false",
+    )
+    for key in ("r1", "r2", "r3", "r4"):
+        value = wall[key]
+        need(
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value),
+            f"apr.restraints.walls.distance.{key} must be a finite number",
+        )
+    need(wall["r1"] < wall["r2"], "apr.restraints.walls.distance.r1 must be < r2")
+    need(wall["r2"] <= wall["r3"], "apr.restraints.walls.distance.r2 must be <= r3")
+    need(wall["r3"] < wall["r4"], "apr.restraints.walls.distance.r3 must be < r4")
+
     s = cfg["slurm"]
     need(s["max_array_size"] <= 1001, "slurm.max_array_size is above the cluster maximum (1001)")
     need(s["sim_cpus"] >= 1 and s["sim_windows_per_cpu"] >= 1, "slurm.sim_cpus and sim_windows_per_cpu must be >= 1")
@@ -69,6 +87,13 @@ def load_config(path=CONFIG_PATH):
         cfg = tomllib.load(f)
 
     cfg["analysis"].setdefault("convergence_plot", True)
+    walls = cfg["apr"]["restraints"].setdefault("walls", {})
+    distance_wall = walls.setdefault("distance", {})
+    distance_wall.setdefault("enabled", False)
+    distance_wall.setdefault("r1", 0.0)
+    distance_wall.setdefault("r2", 1.0)
+    distance_wall.setdefault("r3", 11.0)
+    distance_wall.setdefault("r4", 12.0)
     base = Path(path).resolve().parent                 # relative paths start here
     for key, value in cfg["directories"].items():
         cfg["directories"][key] = str((base / value).resolve())

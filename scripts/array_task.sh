@@ -18,6 +18,11 @@ if [ "$STAGE" = "collect" ]; then
     python "$SCRIPT_DIR/collect_results.py"
     exit 0
 fi
+if [ "$STAGE" = "cleanup_logs" ]; then
+    shift
+    python "$SCRIPT_DIR/cleanup_batch_logs.py" "$@"
+    exit 0
+fi
 
 WORKLIST="${2:?worklist file}"
 if [[ ! -f "$WORKLIST" || ! -r "$WORKLIST" ]]; then

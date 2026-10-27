@@ -25,3 +25,5 @@ EOF
 
 *.mjs
 other/
+
+tests/

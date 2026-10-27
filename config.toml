@@ -71,6 +71,13 @@ torsion_target         = 180.0
 static_fc              = [10.0, 100.0, 100.0, 100.0, 100.0, 100.0]   # the six host-dummy restraints, in order
 host_conformational_fc = 10.0     # per-glucose conformational restraints
 
+[apr.restraints.walls.distance]
+enabled = false
+r1 = 0.0     # <r1 linear; r1-r2 parabolic; r2-r3 flat (zero energy)
+r2 = 1.0     # r3-r4 parabolic; >=r4 linear. Distances are Angstroms.
+r3 = 11.0
+r4 = 12.0
+
 # ---------------------------------------------------------------------------
 [analysis]
 enhanced         = true          # true: also write histogram plots and coordinate metadata

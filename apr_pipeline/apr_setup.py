@@ -39,6 +39,7 @@ ANGLE_TARGET = CFG["apr"]["restraints"]["angle_target"]
 TORSION_TARGET = CFG["apr"]["restraints"]["torsion_target"]
 STATIC_FC = CFG["apr"]["restraints"]["static_fc"]
 CONF_FC = CFG["apr"]["restraints"]["host_conformational_fc"]
+WALLS = CFG["apr"]["restraints"]["walls"]
 
 
 ##host = "BCD"
@@ -131,6 +132,37 @@ def window_setup():
     windows = [len(attach_fractions), len(pull_distances), len(release_fractions)]
     return windows, attach_fractions
 
+
+def create_wall_restraint(structure, D1, G1, attach_windows):
+    wall_config = WALLS["distance"]
+    if not wall_config["enabled"]:
+        return None
+
+    wall = restraints.DAT_restraint()
+    wall.auto_apr = False
+    wall.amber_index = True
+    wall.topology = structure
+    wall.mask1 = D1
+    wall.mask2 = G1
+
+    wall.attach["fc_initial"] = 100.0
+    wall.attach["fc_final"] = 100.0
+    wall.attach["target"] = INITIAL_DISTANCE
+    wall.attach["num_windows"] = attach_windows
+    wall.custom_restraint_values.update(
+        {
+            "r1": wall_config["r1"],
+            "r2": wall_config["r2"],
+            "r3": wall_config["r3"],
+            "r4": wall_config["r4"],
+            "rk2": 100.0,
+            "rk3": 100.0,
+        }
+    )
+    wall.initialize()
+    return wall
+
+
 def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
 
     windows, attach_fractions= window_setup()
@@ -204,6 +236,8 @@ def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
         r.initialize()
         guest_restraints.append(r)
 
+    wall_restraint = create_wall_restraint(structure, D1, G1, windows[0])
+
     # Create directories and write disang.rest for each window.
     window_list = create_window_list(guest_restraints)
     for window in window_list:
@@ -217,6 +251,11 @@ def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
                 line = amber_restraint_line(r, window)
                 if line is not None:
                     f.write(line)
+            if window[0] == "a":
+                if wall_restraint is not None:
+                    line = amber_restraint_line(wall_restraint, window)
+                    if line is not None:
+                        f.write(line)
 
     save_restraints(guest_restraints, filepath="windows/restraints.json")
 

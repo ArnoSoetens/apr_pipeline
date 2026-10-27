@@ -32,6 +32,12 @@ Not in the config on purpose: the `#SBATCH` lines (sbatch reads them before anyt
 the BCD-specific per-glucose restraint atom numbers in `apr_setup.set_restraints`,
 and the output file names inside `run.sh` (production.nc, ...).
 
+An optional attach-phase distance wall is configured under
+`[apr.restraints.walls.distance]`. Set `enabled = true` to turn it on and
+configure `r1`–`r4` in Angstroms. `r2`–`r3` is the flat, zero-energy region;
+the regions outside it are parabolic between the bounds and linear beyond
+`r1`/`r4`. It is disabled by default.
+
 ## Setup: serial or as an array
 
 ```
@@ -80,9 +86,16 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   `N=1` keeps the single-batch workflow. All windows belonging to one data point stay in the same batch.
 * `--clean-after-analysis` is opt-in. After a data point analyzes successfully, transient files are
   removed while preserving its configured guest inputs, complex PDB, SMILES, results JSON, analysis
-  plots, the first five window trajectories, `a000`'s topology, and `windows/restraints.json`.
-  Files are deleted only within that data point's directory; directories are kept. `open_windows.sh`
-  uses the retained `a000` topology when another selected window has no local topology.
+  plots, trajectories from `a000`-`a004` and the last attach window (for example `a015`), the
+  topology in `a000`, and `windows/restraints.json`. Other files in window folders are removed,
+  but existing window directories are kept. Log files within a data point are removed, along with
+  other directories left empty by cleanup. Files are deleted only within that data point; the shared
+  configured Slurm logs directory is otherwise untouched. With `--clean-after-analysis` in `all`,
+  a finalizer removes that batch's simulation and analysis array output logs only after those arrays
+  succeed and every batch point is confirmed analyzed. If any array fails or a point remains
+  incomplete, those logs are retained. Worklists and logs from setup, other batches, or non-batch
+  jobs are not removed. `open_windows.sh` uses the retained `a000` topology when another selected
+  window has no local topology.
 * Windows simulated before the markers existed: if you know they are complete,
   `for w in data/*/windows/*/; do touch "${w}production2.done"; done` marks them
   (a plain `touch data/*/windows/*/production2.done` does NOT work: the `*` only matches files that already exist).

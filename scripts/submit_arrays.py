@@ -124,7 +124,8 @@ def estimate_hours(n_windows, package):
 # sbatch
 # ---------------------------------------------------------------------------
 
-def sbatch(name, limit, cpus, mem_flag, stage_args, array=None, dependency=None):
+def sbatch(name, limit, cpus, mem_flag, stage_args, array=None, dependency=None,
+           dependency_type="afterany"):
     """array = (size, offset) or None; stage_args = what job_array.slurm gets."""
     cmd = ["sbatch", "--parsable","--ntasks=1", f"--job-name=apr_{name}", f"--time={limit}",
            f"--cpus-per-task={cpus}", mem_flag, f"--chdir={script_dir}"]
@@ -139,8 +140,7 @@ def sbatch(name, limit, cpus, mem_flag, stage_args, array=None, dependency=None)
     else:
         cmd.append(f"--output={LOGS}/{name}_%j.out")
     if dependency:
-        # Continue the workflow once prerequisites have ended, even if some tasks failed.
-        cmd.append("--dependency=afterany:" + ":".join(dependency))
+        cmd.append(f"--dependency={dependency_type}:" + ":".join(dependency))
     cmd.append(str(Path(script_dir) / "job_array.slurm"))
     return cmd + [str(a) for a in stage_args]
 
@@ -244,6 +244,28 @@ def submit_collect(dependency, do_submit):
     print("\n[collect] results.csv is built when the analysis has ended")
     cmd = sbatch("collect", "00:10:00", 1, "--mem-per-cpu=1G", ["collect"], dependency=dependency)
     run_sbatch(cmd, do_submit, "<collect_job>")
+
+
+def submit_batch_log_cleanup(batch_number, batch_names, sim_ids, analysis_id, do_submit):
+    """Remove this batch's simulation and analysis logs only after successful analysis."""
+    job_name = f"cleanup_logs_b{batch_number:02d}"
+    stage_args = [
+        "cleanup_logs",
+        batch_number,
+        ",".join(sim_ids) or "-",
+        analysis_id,
+        *batch_names,
+    ]
+    cmd = sbatch(
+        job_name,
+        "00:05:00",
+        1,
+        "--mem-per-cpu=1G",
+        stage_args,
+        dependency=[*sim_ids, analysis_id],
+        dependency_type="afterok",
+    )
+    run_sbatch(cmd, do_submit, "<cleanup_logs_job>")
 
 
 def show_status(dps):
@@ -397,6 +419,7 @@ def main():
                 )
                 analysis_dependencies = sim_ids
             else:
+                sim_ids = []
                 analysis_dependencies = dependencies or None
 
             job = submit_points(
@@ -409,6 +432,10 @@ def main():
                 batch_number=batch_number,
                 clean_after_analysis=args.clean_after_analysis,
             )
+            if args.clean_after_analysis:
+                submit_batch_log_cleanup(
+                    batch_number, batch_names, sim_ids, job, args.submit
+                )
             previous_analysis = job
 
         if previous_analysis:
