@@ -15,7 +15,8 @@ data      = "data"                   # data point folders (iso_00001, ...) are c
 host      = "data"                   # folder holding BCD.pdb, BCD.mol2, BCD.frcmod
 scripts   = "scripts"
 pipeline  = "apr_pipeline"           # the python modules
-input_xml = "data/data_input.xml"    # enumerator output read by create_data_directories.py
+input_xml = "data/data_input.xml"    # enumerator output read by prepare_smiles.py
+smiles_list = "data/smiles.txt"      # selected enumerated or functionalized SMILES, one per line
 templates = "scripts/templates"      # Amber .in templates ($placeholders)
 inputs    = "scripts/inputs"         # rendered .in files, written by make_inputs.py
 logs      = "logs"                   # slurm output files and the worklists of submitted arrays
@@ -44,10 +45,24 @@ guest_resnum  = 2                 # residue number of the guest in the PDB files
 
 # ---------------------------------------------------------------------------
 [parametrize]                # antechamber / parmchk2
-net_charge    = 0
+net_charge    = "auto"       # "auto" uses the RDKit formal charge of each guest; or set an integer
 charge_method = "bcc"
 atom_type     = "gaff"       # antechamber -at, and leaprc.<atom_type> in tleap
 parmchk_set   = 1            # parmchk2 -s  (1 = gaff, 2 = gaff2)
+
+# ---------------------------------------------------------------------------
+[functionalize]              # optional RDKit transformation before data-point directories are made
+enabled        = true         # false: use enumerated molecules as-is; true: create group-substituted products
+site_strategy  = "backbone_ends"  # backbone_ends or all_terminal
+replace_policy = "h_first_cf3_only"  # replace H first; replace F only on a terminal CF3 carbon
+
+[functionalize.groups]       # the first atom in each fragment is bonded to the selected carbon
+carboxylate      = "C(=O)[O-]"
+carboxylic_acid  = "C(=O)O"
+sulfonate        = "S(=O)(=O)[O-]"
+hydroxyl         = "O"
+amine            = "N"
+ammonium         = "[NH3+]"
 
 # ---------------------------------------------------------------------------
 [apr]

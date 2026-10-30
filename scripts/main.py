@@ -1,6 +1,6 @@
 """Set up data points: guest structure, placement in the host, parametrization, APR windows.
 
-    python main.py                  serial: create the data point folders from the XML, then set up
+    python main.py                  serial: prepare data point SMILES from XML, then set up
                                     every data point whose windows are not complete
     python main.py --force          ... and redo the complete ones too
     python main.py iso_00001 ...    set up just these data points (this is what the slurm array tasks do)
@@ -45,8 +45,18 @@ from datapoints import SETUP_STATES, clear_failed, data_points, mark_failed, sca
 
 serial = not args.names
 if serial:
-    # no names given: make the folders from the XML first, then take every data point
-    subprocess.run(["python3", "create_data_directories.py", CFG["directories"]["input_xml"], data_dir], cwd=pipeline_dir)
+    # no names given: prepare the configured SMILES list and make the data folders
+    subprocess.run(["python3", "prepare_smiles.py"], cwd=pipeline_dir, check=True)
+    subprocess.run(
+        [
+            "python3",
+            "create_data_directories.py",
+            CFG["directories"]["smiles_list"],
+            data_dir,
+        ],
+        cwd=pipeline_dir,
+        check=True,
+    )
     names = [dp.name for dp in data_points()]
 else:
     names = args.names
@@ -90,7 +100,7 @@ for i, name in enumerate(names, 1):
         guest_aligned = place_guest_in_cavity(mol, G1, G2)[0]
         generate_pdb(host,guest_aligned,out_dir=data_point_dir)
 
-        parametrize(data_point_dir)
+        parametrize(data_point_dir, net_charge=Chem.GetFormalCharge(mol))
 
         setup_datapoint(data_point_dir, host_dir, G1, G2)
     except Exception as e:

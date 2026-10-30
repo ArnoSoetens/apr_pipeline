@@ -50,6 +50,15 @@ python scripts/submit_arrays.py setup --submit        # creates data point folde
 python scripts/submit_arrays.py setup --retry-failed --submit
 ```
 
+Before directory creation, `apr_pipeline/prepare_smiles.py` converts the enumerator XML to
+`directories.smiles_list` (one SMILES per line). Functionalization is optional and is disabled by
+default; set `functionalize.enabled = true` to make RDKit products from the fragments in
+`[functionalize.groups]`. The products are canonicalized and deduplicated in the same list. The
+directory creator then writes one `isomers.csv` with `folder,smiles` columns. The default site
+strategy is the two endpoints of the carbon backbone. H is replaced whenever available; an F is
+used only for a terminal CF3 endpoint. Set `parametrize.net_charge = "auto"` (the default) to pass
+each selected molecule's RDKit formal charge to antechamber.
+
 * A data point that fails gets `setup_failed.txt` with the reason (shown by `status`); success removes it.
   The `setup` array leaves failed data points out unless you pass `--retry-failed`.
 * Wait for the setup array to finish before `sim`: the simulation list is made from the windows setup creates.
@@ -155,3 +164,23 @@ energy statistic, not work or a binding free-energy contribution. No
 `analysis.enhanced` continues to control the supplementary histogram plots and
 coordinate metadata in `results.json`. The convergence plot and phase estimates
 are generated regardless of that setting.
+
+## Acknowledgments and references
+
+Isomer enumeration uses `enu` from [CombiFF](https://github.com/csms-ethz/CombiFF).
+The APR setup, simulation, and analysis code uses
+[pAPRika](https://github.com/GilsonLabUCSD/pAPRika).
+
+Please cite these projects as follows:
+
+- Oliveira, M. P., Andrey, M., Rieder, S. R., Kern, L., Hahn, D. F., Riniker,
+  S., Horta, B. A. C., and Hünenberger, P. H. “Systematic Optimization of a
+  Fragment-Based Force Field against Experimental Pure-Liquid Properties
+  Considering Large Compound Families: Application to Saturated Haloalkanes.”
+  *Journal of Chemical Theory and Computation* 16(12), 7525–7555 (2020).
+  [https://doi.org/10.1021/acs.jctc.0c00683](https://doi.org/10.1021/acs.jctc.0c00683)
+- Slochower, D., Setiadi, J., Henriksen, N., Boothroyd, S., Thompson, M., and
+  Wang, L. *pAPRika*, version 1.1.0 (2021).
+  [https://github.com/GilsonLabUCSD/pAPRika](https://github.com/GilsonLabUCSD/pAPRika).
+  This follows the citation metadata in pAPRika's
+  [CITATION.cff](https://github.com/GilsonLabUCSD/pAPRika/blob/master/CITATION.cff).

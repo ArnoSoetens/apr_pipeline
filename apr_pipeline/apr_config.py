@@ -79,6 +79,26 @@ def _validate(cfg):
     need(an["method"] in METHODS, f"analysis.method must be one of {list(METHODS)}")
     need(isinstance(an["convergence_plot"], bool), "analysis.convergence_plot must be true or false")
     need(r["pmemd"] in PMEMD_KINDS, f"run.pmemd must be one of {list(PMEMD_KINDS)}")
+    functionalize = cfg["functionalize"]
+    need(
+        isinstance(functionalize["enabled"], bool),
+        "functionalize.enabled must be true or false",
+    )
+    need(
+        functionalize["site_strategy"] in ("backbone_ends", "all_terminal"),
+        "functionalize.site_strategy must be 'backbone_ends' or 'all_terminal'",
+    )
+    need(
+        functionalize["replace_policy"] == "h_first_cf3_only",
+        "functionalize.replace_policy must be 'h_first_cf3_only'",
+    )
+    need(bool(functionalize["groups"]), "functionalize.groups must contain at least one group")
+    net_charge = cfg["parametrize"]["net_charge"]
+    need(
+        net_charge == "auto"
+        or (isinstance(net_charge, int) and not isinstance(net_charge, bool)),
+        "parametrize.net_charge must be 'auto' or an integer",
+    )
     _radii_for(cfg)
 
 

@@ -1,71 +1,57 @@
 #!/usr/bin/env python3
-"""
-Parses an isomer_enumeration XML file and, for every <isomer>, creates:
-
-    <isomers_dir>/iso_00001/iso_00001.smi      (one line: the SMILES)
-
-and writes <isomers_dir>/isomers.csv mapping folder -> isomer_id -> SMILES.
+"""Create one data-point directory for each SMILES in the configured text file.
 
 Usage:
-    python3 create_data_directories.py [<path_to_xml> <isomers_output_dir>]   (default: from config.toml)
+    python3 create_data_directories.py [<path_to_smiles_txt> <isomers_output_dir>]
 """
 import csv
-import sys
 import os
-import xml.etree.ElementTree as ET
+import sys
 
 from apr_config import CFG
 
 
 def main():
-    if len(sys.argv) == 1:          # no arguments: both come from config.toml
-        xml_path = CFG["directories"]["input_xml"]
+    if len(sys.argv) == 1:
+        smiles_path = CFG["directories"]["smiles_list"]
         isomers_dir = CFG["directories"]["data"]
     elif len(sys.argv) == 3:
-        xml_path = sys.argv[1]
+        smiles_path = sys.argv[1]
         isomers_dir = sys.argv[2]
     else:
-        print(f"Usage: {sys.argv[0]} [<path_to_xml> <isomers_output_dir>]", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} [<path_to_smiles_txt> <isomers_output_dir>]", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isfile(xml_path):
-        print(f"Error: XML file not found: {xml_path}", file=sys.stderr)
+    if not os.path.isfile(smiles_path):
+        print(f"Error: SMILES file not found: {smiles_path}", file=sys.stderr)
         sys.exit(1)
-
     os.makedirs(isomers_dir, exist_ok=True)
-
-    root = ET.parse(xml_path).getroot()
-
     rows = []
-    skipped = 0
+    product_count = 0
+    with open(smiles_path) as smiles_file:
+        for line_number, line in enumerate(smiles_file, start=1):
+            smiles = line.strip()
+            if not smiles:
+                continue
+            product_count += 1
+            dir_name = (
+                f"{CFG['naming']['folder_prefix']}"
+                f"{product_count:0{CFG['naming']['folder_digits']}d}"
+            )
+            smiles_dir = os.path.join(isomers_dir, dir_name)
+            os.makedirs(smiles_dir, exist_ok=True)
 
-    for number, isomer in enumerate(root.iter("isomer"), start=1):
-        isomer_id = isomer.get("isomer_id", "unknown")
-        smiles_el = isomer.find("constitutional_SMILES")
+            with open(os.path.join(smiles_dir, f"{dir_name}.smi"), "w") as smiles_output:
+                smiles_output.write(smiles + "\n")
 
-        if smiles_el is None or not (smiles_el.text or "").strip():
-            print(f"Warning: isomer {isomer_id} has no SMILES, skipping.", file=sys.stderr)
-            skipped += 1
-            continue
+            rows.append([dir_name, smiles])
 
-        smiles = smiles_el.text.strip()
-        dir_name = f"{CFG['naming']['folder_prefix']}{number:0{CFG['naming']['folder_digits']}d}"
-
-        smiles_dir = os.path.join(isomers_dir, dir_name)
-        os.makedirs(smiles_dir, exist_ok=True)
-
-        with open(os.path.join(smiles_dir, f"{dir_name}.smi"), "w") as f:
-            f.write(smiles + "\n")
-
-        rows.append([dir_name, isomer_id, smiles])
-
-    with open(os.path.join(isomers_dir, "isomers.csv"), "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["folder", "isomer_id", "smiles"])
+    with open(os.path.join(isomers_dir, "isomers.csv"), "w", newline="") as mapping_file:
+        writer = csv.writer(mapping_file)
+        writer.writerow(["folder", "smiles"])
         writer.writerows(rows)
 
-    print(f"Wrote {len(rows)} isomer directories to {isomers_dir}"
-          + (f" ({skipped} skipped)" if skipped else ""))
+    print(f"Wrote {product_count} isomer directories to {isomers_dir}")
 
 
 if __name__ == "__main__":

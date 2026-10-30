@@ -2,7 +2,20 @@ import subprocess
 
 from apr_config import CFG
 
-def parametrize(data_dir, guest_pdb=f'{CFG["naming"]["guest_prefix"]}.pdb', guest_prefix=CFG["naming"]["guest_prefix"]):
+def parametrize(
+    data_dir,
+    guest_pdb=f'{CFG["naming"]["guest_prefix"]}.pdb',
+    guest_prefix=CFG["naming"]["guest_prefix"],
+    net_charge=None,
+):
+    configured_charge = CFG["parametrize"]["net_charge"]
+    if configured_charge == "auto":
+        if net_charge is None:
+            raise ValueError("net_charge is required when parametrize.net_charge = 'auto'")
+        charge = net_charge
+    else:
+        charge = configured_charge
+
     result = subprocess.run(
     [
         "antechamber",
@@ -12,7 +25,7 @@ def parametrize(data_dir, guest_pdb=f'{CFG["naming"]["guest_prefix"]}.pdb', gues
         "-fo", "mol2",
         "-c", CFG["parametrize"]["charge_method"],
         "-pf", "y",
-        "-nc", str(CFG["parametrize"]["net_charge"]),
+        "-nc", str(charge),
         "-rn", guest_prefix,
         "-at", CFG["parametrize"]["atom_type"]
     ],

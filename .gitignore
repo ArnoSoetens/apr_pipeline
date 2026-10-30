@@ -27,3 +27,6 @@ EOF
 other/
 
 tests/
+!tests/
+tests/*
+!tests/test_prepare_smiles.py
