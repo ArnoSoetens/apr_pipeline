@@ -225,6 +225,17 @@ def renumber_guest(input_path, output_path=None, resnum=CFG["placement"]["guest_
     return n_renum, n_ter
 
 
+def _write_clash_guest(guest_mol, out_dir, guest_prefix, resnum, resname):
+    """Persist the rejected guest pose at the normal guest PDB path."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    guest_path = out_dir / f"{guest_prefix}.pdb"
+
+    Chem.MolToPDBFile(guest_mol, str(guest_path), flavor=2)
+    renumber_guest(guest_path, resnum=resnum, resname=resname, add_ter=False)
+    remove_conect(guest_path)
+
+
 # --------------------------------------------------------------------------
 # The stage: clash check -> write PDBs -> fix residue numbering
 # --------------------------------------------------------------------------
@@ -235,7 +246,7 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"][
     """Write <guest_prefix>.pdb and <complex_prefix>.pdb into out_dir.
 
     1. Clash check: if any host-guest atom pair is closer than clash_cutoff
-       (Angstrom), raise ValueError BEFORE anything is written.
+       (Angstrom), save the rejected guest pose and raise ValueError.
        Pass clash_cutoff=None to skip the check.
     2. Write both files with RDKit (see Mol_to_PDB).
     3. Set the guest's residue number to `resnum` in both files, and insert a
@@ -248,12 +259,16 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"][
     if clash_cutoff is not None:
         report = clash_report(host, guest_aligned, clash_cutoff)
         if report["n_pairs_under_cutoff"] > 0:
+            _write_clash_guest(
+                guest_aligned, out_dir, guest_prefix, resnum, resname
+            )
             raise ValueError(
                 f"clash: {report['n_pairs_under_cutoff']} host-guest atom pair(s) closer than "
                 f"{clash_cutoff} A (min {report['min_distance']:.2f} A between host atom "
                 f"{report['closest_host_atom']} and guest atom {report['closest_guest_atom']})"
             )
 
+    out_dir = Path(out_dir)
     guest_pdb, complex_pdb = Mol_to_PDB(host, guest_aligned, complex_prefix, guest_prefix,
                                         out_dir=out_dir, flavor=flavor)
     try:

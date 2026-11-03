@@ -28,6 +28,25 @@ project/
   (`export PMEMD=pmemd`, `export MAX_JOBS=4`).
 * `scripts/` assumes `apr_pipeline/` sits next to it.
 
+`scripts/open_windows.sh` also supports static structure inspection:
+
+```
+./scripts/open_windows.sh --complex-only iso_00001 - iso_00010
+./scripts/open_windows.sh --failed-clashes
+./scripts/open_windows.sh --failed-clashes iso_00001-iso_00010
+```
+
+`--complex-only` opens the saved host+guest complex PDBs for the selected data
+points. Data-point ranges accept either `iso_00001-iso_00010` or
+`iso_00001 - iso_00010`. `--failed-clashes` scans `setup_failed.txt` files for
+clash reports, loads the configured host PDB once and each failed guest PDB as
+a separate molecule, and highlights the nearest guest atom with a Licorice
+representation.
+Failed guest poses are written to the normal guest PDB (`UNL.pdb` by default).
+Only the host is initially visible; use VMD's molecule list to switch to a
+guest molecule. Re-run setup/placement to regenerate guest poses after changing
+the placement or clash-detection algorithm.
+
 Not in the config on purpose: the `#SBATCH` lines (sbatch reads them before anything else runs),
 the BCD-specific per-glucose restraint atom numbers in `apr_setup.set_restraints`,
 and the output file names inside `run.sh` (production.nc, ...).

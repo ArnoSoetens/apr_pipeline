@@ -15,7 +15,7 @@ import sys
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 
-from apr_config import CFG, get_pmemd_command
+from apr_config import CFG, CONFIG_PATH, get_pmemd_command
 
 
 def dq(value):
@@ -31,7 +31,19 @@ def export(name, value, raw=False):
     print(f'export {name}="${{{name}:-{text}}}"')
 
 
-export("DATA_DIR", CFG["directories"]["data"])
+export(
+    "DATA_DIR",
+    str((CONFIG_PATH.parent / CFG["directories"]["data"]).resolve()),
+)
+export(
+    "HOST_PDB",
+    str(
+        (CONFIG_PATH.parent / CFG["directories"]["host"] / f'{CFG["naming"]["host_prefix"]}.pdb')
+        .resolve()
+    ),
+)
+export("HOST_PREFIX", CFG["naming"]["host_prefix"])
+export("GUEST_PREFIX", CFG["naming"]["guest_prefix"])
 export("INPUT_DIR", CFG["directories"]["inputs"])
 export("COMPLEX_PREFIX", CFG["naming"]["complex_prefix"])
 export("TRAJECTORY", CFG["analysis"]["trajectory"])

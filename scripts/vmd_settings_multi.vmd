@@ -24,6 +24,38 @@ proc apply_window_reps {molid} {
     mol addrep $molid
 }
 
+proc apply_complex_reps {molid} {
+    mol delrep 0 $molid
+
+    mol representation Lines
+    mol color Name
+    mol selection "all"
+    mol material Opaque
+    mol addrep $molid
+
+    mol representation Licorice 0.3 12.0 12.0
+    mol color Name
+    mol selection "index 147 to 190"
+    mol material Opaque
+    mol addrep $molid
+}
+
+proc apply_clash_reps {molid guest_atom_index} {
+    mol delrep 0 $molid
+
+    mol representation Lines
+    mol color Name
+    mol selection "all"
+    mol material Opaque
+    mol addrep $molid
+
+    mol representation Licorice 0.3 12.0 12.0
+    mol color Name
+    mol selection "index $guest_atom_index"
+    mol material Opaque
+    mol addrep $molid
+}
+
 # --- Global display settings (applied once, not per molecule) ---
 display projection Orthographic
 display depthcue off

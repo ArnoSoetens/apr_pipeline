@@ -7,6 +7,9 @@
 #
 # Usage (from anywhere):
 #   ./open_windows.sh <datapoint> <windows...>
+#   ./open_windows.sh --complex-only iso_00001 - iso_00010
+#   ./open_windows.sh --failed-clashes
+#   ./open_windows.sh --failed-clashes iso_00001-iso_00010
 #
 #   ./open_windows.sh iso_00001 a000-a005
 #   ./open_windows.sh iso_00001 a000 a003 p010-p012
@@ -54,6 +57,8 @@ VMD_SETTINGS_SCRIPT="$SCRIPT_DIR/vmd_settings_multi.vmd"
 RUN_CPPTRAJ=true
 RUN_VMD=true
 VERBOSE=false
+COMPLEX_ONLY=false
+FAILED_CLASHES=false
 POSITIONAL=()
 
 while [[ $# -gt 0 ]]; do
@@ -61,16 +66,194 @@ while [[ $# -gt 0 ]]; do
         --no-cpptraj) RUN_CPPTRAJ=false ;;
         --no-vmd)     RUN_VMD=false ;;
         --verbose|-v) VERBOSE=true ;;
+        --complex-only) COMPLEX_ONLY=true ;;
+        --failed-clashes) FAILED_CLASHES=true ;;
         --traj)       TRAJECTORY="$2"; shift ;;
         *)            POSITIONAL+=("$1") ;;
     esac
     shift
 done
 
-if [[ ${#POSITIONAL[@]} -lt 2 ]]; then
+if $COMPLEX_ONLY && $FAILED_CLASHES; then
+    echo "Error: --complex-only and --failed-clashes cannot be used together." >&2
+    exit 1
+fi
+
+if ! $COMPLEX_ONLY && ! $FAILED_CLASHES && [[ ${#POSITIONAL[@]} -lt 2 ]]; then
     echo "Usage: $0 [--traj FILE] [--no-cpptraj] [--no-vmd] [-v] <datapoint> <windows...>" >&2
+    echo "       $0 --complex-only <datapoint/range...>" >&2
+    echo "       $0 --failed-clashes [datapoint/range...]" >&2
     echo "  e.g. $0 iso_00001 a000-a005" >&2
     exit 1
+fi
+
+log() {
+    if $VERBOSE; then
+        echo "$@"
+    fi
+}
+
+expand_datapoint_args() {
+    EXPANDED_DATAPOINTS=()
+    local -a ranges=()
+    local i token start end prefix1 prefix2 start_num end_num width number
+
+    i=0
+    while (( i < ${#POSITIONAL[@]} )); do
+        token="${POSITIONAL[$i]}"
+        if [[ "$token" == "-" ]]; then
+            if (( i == 0 || i + 1 >= ${#POSITIONAL[@]} )); then
+                echo "Error: a spaced range must be written as START - END." >&2
+                return 1
+            fi
+            token="${POSITIONAL[$((i - 1))]}-${POSITIONAL[$((i + 1))]}"
+            ranges[${#ranges[@]}-1]="$token"
+            ((i += 2))
+            continue
+        fi
+        ranges+=("$token")
+        ((i += 1))
+    done
+
+    for token in "${ranges[@]}"; do
+        token="$(basename "$token")"
+        if [[ "$token" =~ ^([[:alpha:]_]+)([0-9]+)-([[:alpha:]_]+)([0-9]+)$ ]]; then
+            prefix1="${BASH_REMATCH[1]}"
+            start_num="${BASH_REMATCH[2]}"
+            prefix2="${BASH_REMATCH[3]}"
+            end_num="${BASH_REMATCH[4]}"
+            if [[ "$prefix1" != "$prefix2" ]]; then
+                echo "Error: range prefixes differ in '$token'." >&2
+                return 1
+            fi
+            start=$((10#$start_num))
+            end=$((10#$end_num))
+            if (( start > end )); then
+                echo "Error: range start is greater than end in '$token'." >&2
+                return 1
+            fi
+            width=${#start_num}
+            for ((number = start; number <= end; number++)); do
+                EXPANDED_DATAPOINTS+=("$(printf "%s%0*d" "$prefix1" "$width" "$number")")
+            done
+        elif [[ "$token" =~ ^[[:alpha:]_]+[0-9]+$ ]]; then
+            EXPANDED_DATAPOINTS+=("$token")
+        else
+            EXPANDED_DATAPOINTS+=("$token")
+        fi
+    done
+}
+
+run_pdb_mode() {
+    local mode="$1"
+    local datapoint pdb_path report_path guest_path guest_atom_index
+    local -a valid_names=() valid_pdbs=() valid_indices=()
+
+    if $COMPLEX_ONLY && [[ ${#POSITIONAL[@]} -eq 0 ]]; then
+        echo "Error: --complex-only needs one or more data points/ranges." >&2
+        return 1
+    fi
+
+    if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+        expand_datapoint_args || return 1
+        local -a selected_datapoints=("${EXPANDED_DATAPOINTS[@]}")
+    else
+        local -a selected_datapoints=()
+        while IFS= read -r -d '' report_path; do
+            selected_datapoints+=("$(basename "$(dirname "$report_path")")")
+        done < <(find "$DATA_DIR" -mindepth 2 -maxdepth 2 -type f -name setup_failed.txt -print0 | sort -z)
+    fi
+
+    if [[ "$mode" == "complex" ]]; then
+        for datapoint in "${selected_datapoints[@]}"; do
+            pdb_path="$DATA_DIR/$datapoint/$COMPLEX_PREFIX.pdb"
+            if [[ ! -s "$pdb_path" ]]; then
+                echo "Warning: skipping '$datapoint' -- complex PDB not found at $pdb_path" >&2
+                continue
+            fi
+            valid_names+=("$datapoint")
+            valid_pdbs+=("$pdb_path")
+        done
+    else
+        if [[ ! -s "$HOST_PDB" ]]; then
+            echo "Error: host PDB not found at $HOST_PDB" >&2
+            return 1
+        fi
+        for datapoint in "${selected_datapoints[@]}"; do
+            report_path="$DATA_DIR/$datapoint/setup_failed.txt"
+            guest_path="$DATA_DIR/$datapoint/$GUEST_PREFIX.pdb"
+            if [[ ! -s "$report_path" || ! -s "$guest_path" ]]; then
+                echo "Warning: skipping '$datapoint' -- setup failure report or guest PDB is missing" >&2
+                continue
+            fi
+            guest_atom_index="$(sed -nE 's/.*guest atom ([0-9]+).*/\1/p' "$report_path" | head -n 1)"
+            if [[ ! "$guest_atom_index" =~ ^[0-9]+$ ]]; then
+                echo "Warning: skipping '$datapoint' -- no guest atom index in $report_path" >&2
+                continue
+            fi
+            valid_names+=("$datapoint")
+            valid_pdbs+=("$guest_path")
+            valid_indices+=("$guest_atom_index")
+        done
+    fi
+
+    if [[ ${#valid_names[@]} -eq 0 ]]; then
+        echo "Error: no valid PDBs to load for --$mode mode." >&2
+        return 1
+    fi
+
+    log "== PDBs ready for VMD (${#valid_names[@]}) =="
+    if ! $RUN_VMD; then
+        log "Skipping VMD (--no-vmd given)."
+        return 0
+    fi
+
+    local load_script
+    load_script="$(mktemp /tmp/vmd_load_XXXXXX.vmd)"
+    {
+        if [[ -f "$VMD_SETTINGS_SCRIPT" ]]; then
+            echo "source {$VMD_SETTINGS_SCRIPT}"
+        fi
+        if [[ "$mode" == "complex" ]]; then
+            for i in "${!valid_names[@]}"; do
+                echo "set molid [mol new {${valid_pdbs[$i]}} type pdb waitfor all]"
+                echo "mol rename \$molid {${valid_names[$i]}}"
+                if [[ -f "$VMD_SETTINGS_SCRIPT" ]]; then
+                    echo "apply_complex_reps \$molid"
+                fi
+            done
+        else
+            echo "set host_molid [mol new {$HOST_PDB} type pdb waitfor all]"
+            echo "mol rename \$host_molid {$HOST_PREFIX}"
+            for i in "${!valid_names[@]}"; do
+                echo "set molid [mol new {${valid_pdbs[$i]}} type pdb waitfor all]"
+                echo "mol rename \$molid {${valid_names[$i]}}"
+                if [[ -f "$VMD_SETTINGS_SCRIPT" ]]; then
+                    echo "apply_clash_reps \$molid ${valid_indices[$i]}"
+                fi
+            done
+        fi
+        echo "catch {mol top 0}"
+        echo "catch {hide_all_but_first}"
+        echo "display resetview"
+    } > "$load_script"
+
+    log "== Launching VMD with ${#valid_names[@]} PDB molecule(s) =="
+    if $VERBOSE; then
+        vmd -e "$load_script"
+    else
+        vmd -e "$load_script" > /dev/null 2>&1
+    fi
+}
+
+if $COMPLEX_ONLY; then
+    run_pdb_mode complex
+    exit $?
+fi
+
+if $FAILED_CLASHES; then
+    run_pdb_mode failed-clashes
+    exit $?
 fi
 
 DATAPOINT="$(basename "${POSITIONAL[0]}")"
@@ -81,12 +264,6 @@ if [[ ! -d "$WINDOWS_DIR" ]]; then
     echo "Error: no windows folder at $WINDOWS_DIR" >&2
     exit 1
 fi
-
-log() {
-    if $VERBOSE; then
-        echo "$@"
-    fi
-}
 
 # ---------------------------------------------------------------------------
 # EXPAND RANGES  (a000-a005 -> a000 a001 ... a005)
