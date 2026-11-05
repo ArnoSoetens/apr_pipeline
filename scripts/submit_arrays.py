@@ -16,8 +16,8 @@ Setup
     also possible: python scripts/main.py.
 Simulation
     Every window that still has to be simulated goes into ONE list (lines like iso_00001/a000).
-    The list is cut into work packages of  sim_cpus x sim_windows_per_cpu  windows. One array task
-    runs one package on sim_cpus CPUs, one window per CPU at a time.
+    The list is cut into work packages sized to fit within sim_task_hours, leaving a 25% runtime
+    reserve. One array task runs one package on sim_cpus CPUs, one window per CPU at a time.
     More tasks than max_array_size are split over several arrays.
 Analysis
     The data points that are (or will be) fully simulated, a few per task. The analysis
@@ -26,7 +26,7 @@ Analysis
     Cleanup can be enabled per data point after its analysis succeeds.
 
 Options:
-    --windows-per-task N    size of a simulation work package (default: sim_cpus x sim_windows_per_cpu)
+    --windows-per-task N    size of a simulation work package (default: calculated from sim_task_hours)
     --points-per-task N     data points per setup or analysis task (default: from config.toml)
     --batches N             `all`: sequential batch count (default: 1)
     --clean-after-analysis   `all`: delete transient files after successful analysis
@@ -85,7 +85,14 @@ def hhmmss(minutes):
 
 
 def default_package():
-    return SL["sim_cpus"] * SL["sim_windows_per_cpu"]
+    available_minutes = SL["sim_task_hours"] * 60 * 0.75
+    windows_per_cpu = math.floor(available_minutes / SL["sim_minutes_per_window"])
+    if windows_per_cpu < 1:
+        raise ValueError(
+            "slurm.sim_task_hours must allow at least one sim_minutes_per_window "
+            "after reserving 25% of the task time"
+        )
+    return SL["sim_cpus"] * windows_per_cpu
 
 
 def waves(package):
@@ -94,9 +101,9 @@ def waves(package):
 
 
 def sim_time(package):
-    """Time limit: the package needs waves x minutes_per_window; +50 % margin, capped at sim_task_hours."""
+    """Time limit: estimated runtime plus 25% and 10 minutes, capped at sim_task_hours."""
     needed = waves(package) * SL["sim_minutes_per_window"]
-    return hhmmss(min(SL["sim_task_hours"] * 60, needed * 1.5 + 10))
+    return hhmmss(min(SL["sim_task_hours"] * 60, needed * 1.25 + 10))
 
 
 def analysis_time(per_task):

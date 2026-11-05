@@ -133,9 +133,8 @@ max_array_size = 1000        # tasks per array (cluster maximum: 1001); more tas
 # Simulation: every window that still has to be simulated goes into ONE list. The list is cut into
 # work packages; one array task runs one package on sim_cpus CPUs, one window per CPU at a time.
 sim_cpus               = 1      # CPUs requested per task
-sim_windows_per_cpu    = 2     # work package = sim_cpus x this:  6 CPUs -> 270 windows, 4 CPUs -> 180 windows
-sim_task_hours         = 4      # time limit of a task (45 windows x ~5 min = 3.75 h), automatically set to x1.5 work package estimate
-sim_minutes_per_window = 5      # only for estimates, and for the time limit of small packages
+sim_task_hours         = 4      # max task time; default package size reserves 25% for longer-than-estimated windows
+sim_minutes_per_window = 5      # estimated runtime per window; 4 hours and 5 min/window -> 36 windows per CPU
 sim_mem_per_cpu        = "1G"
 
 # Setup (scripts/main.py): one core per task, a few data points per task.

@@ -91,9 +91,11 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
 ```
 
 * Every window that still has to be simulated goes into one list (`iso_00001/a000`, ...).
-  The list is cut into work packages of `slurm.sim_cpus x slurm.sim_windows_per_cpu` windows
-  (6 CPUs x 45 = 270; 4 CPUs x 45 = 180). One array task runs one package on `sim_cpus` CPUs,
-  one window per CPU at a time; a package may span several data points.
+  By default, the script calculates windows per CPU from `slurm.sim_task_hours` and
+  `slurm.sim_minutes_per_window`, reserving 25% of the task time. For example, 4 hours and
+  5 minutes per window gives 36 windows per CPU. One array task runs one package on `sim_cpus`
+  CPUs, one window per CPU at a time; a package may span several data points. Use
+  `--windows-per-task` to override the calculated package size.
 * More tasks than `max_array_size` are split over several arrays (each with an offset into the list).
 * A finished window gets a `production2.done` file; resubmitting only puts unfinished windows in the list.
 * For a small job (few tasks) the script suggests a smaller `--windows-per-task`, because then all

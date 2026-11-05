@@ -72,7 +72,7 @@ def _validate(cfg):
 
     s = cfg["slurm"]
     need(s["max_array_size"] <= 1001, "slurm.max_array_size is above the cluster maximum (1001)")
-    need(s["sim_cpus"] >= 1 and s["sim_windows_per_cpu"] >= 1, "slurm.sim_cpus and sim_windows_per_cpu must be >= 1")
+    need(s["sim_cpus"] >= 1, "slurm.sim_cpus must be >= 1")
     need(s["sim_task_hours"] > 0 and s["sim_minutes_per_window"] > 0, "slurm.sim_task_hours and sim_minutes_per_window must be > 0")
     need(s["analysis_data_points_per_task"] >= 1, "slurm.analysis_data_points_per_task must be >= 1")
     need(s["setup_data_points_per_task"] >= 1 and s["setup_cpus"] >= 1, "slurm.setup_data_points_per_task and setup_cpus must be >= 1")
