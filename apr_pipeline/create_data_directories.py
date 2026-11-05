@@ -22,6 +22,9 @@ def main():
         print(f"Usage: {sys.argv[0]} [<path_to_smiles_txt> <isomers_output_dir>]", file=sys.stderr)
         sys.exit(1)
 
+    if not str(smiles_path).lower().endswith(".txt"):
+        print(f"Error: expected a .txt SMILES file: {smiles_path}", file=sys.stderr)
+        sys.exit(1)
     if not os.path.isfile(smiles_path):
         print(f"Error: SMILES file not found: {smiles_path}", file=sys.stderr)
         sys.exit(1)

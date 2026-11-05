@@ -1,6 +1,6 @@
 """Set up data points: guest structure, placement in the host, parametrization, APR windows.
 
-    python main.py                  serial: prepare data point SMILES from XML, then set up
+    python main.py                  serial: create data point folders from the configured SMILES list, then set up
                                     every data point whose windows are not complete
     python main.py --force          ... and redo the complete ones too
     python main.py iso_00001 ...    set up just these data points (this is what the slurm array tasks do)
@@ -45,11 +45,10 @@ from datapoints import SETUP_STATES, clear_failed, data_points, mark_failed, sca
 
 serial = not args.names
 if serial:
-    # no names given: prepare the configured SMILES list and make the data folders
-    subprocess.run(["python3", "prepare_smiles.py"], cwd=pipeline_dir, check=True)
+    # no names given: make data folders directly from the configured text file
     subprocess.run(
         [
-            "python3",
+            sys.executable,
             "create_data_directories.py",
             CFG["directories"]["smiles_list"],
             data_dir,

@@ -1,4 +1,3 @@
-data/
 __pycache__
 **/*.slurm
 *.slurm
@@ -6,7 +5,10 @@ data_previous_runs/
 
 cat << 'EOF' > .gitignore
 # Data & Cache
-data/
+data/*
+!data/BCD.frcmod
+!data/BCD.mol2
+!data/BCD.pdb
 __pycache__/
 *.pyc
 
@@ -27,6 +29,3 @@ EOF
 other/
 
 tests/
-!tests/
-tests/*
-!tests/test_prepare_smiles.py

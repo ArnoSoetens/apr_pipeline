@@ -17,15 +17,10 @@ class PrepareSmilesTests(unittest.TestCase):
     def test_functionalization_can_be_disabled(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            xml_path = root / "enumeration.xml"
-            xml_path.write_text(
-                "<isomer_enumeration><isomer isomer_id='mol_1'>"
-                "<constitutional_SMILES>CCC</constitutional_SMILES></isomer>"
-                "</isomer_enumeration>"
-            )
+            smiles_path = root / "smiles.txt"
+            smiles_path.write_text("CCC\n\n")
             directories = {
-                "input_xml": str(xml_path),
-                "smiles_list": str(root / "smiles.txt"),
+                "smiles_list": str(smiles_path),
             }
             config = {
                 "directories": directories,
@@ -39,21 +34,15 @@ class PrepareSmilesTests(unittest.TestCase):
             with patch.object(prepare_smiles, "CFG", config):
                 prepare_smiles.main()
 
-            self.assertEqual(Path(directories["smiles_list"]).read_text(), "CCC\n")
+            self.assertEqual(smiles_path.read_text(), "CCC\n")
 
     def test_functionalization_writes_products_to_the_same_smiles_list(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            xml_path = root / "enumeration.xml"
-            xml_path.write_text(
-                "<isomer_enumeration><isomer isomer_id='mol_1'>"
-                "<constitutional_SMILES>CC</constitutional_SMILES></isomer>"
-                "</isomer_enumeration>"
-            )
             smiles_path = root / "smiles.txt"
+            smiles_path.write_text("CC\n")
             config = {
                 "directories": {
-                    "input_xml": str(xml_path),
                     "smiles_list": str(smiles_path),
                 },
                 "functionalize": {
@@ -68,19 +57,14 @@ class PrepareSmilesTests(unittest.TestCase):
 
             self.assertEqual(smiles_path.read_text(), "CCO\n")
 
-    def test_extract_and_write_plain_smiles_skips_empty_xml_entries(self):
+    def test_read_and_write_plain_smiles_skips_blank_lines(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            xml_path = root / "enumeration.xml"
-            xml_path.write_text(
-                "<isomer_enumeration><isomer isomer_id='mol_1'>"
-                "<constitutional_SMILES>CC</constitutional_SMILES></isomer>"
-                "<isomer isomer_id='mol_2'><constitutional_SMILES> "
-                "</constitutional_SMILES></isomer></isomer_enumeration>"
-            )
+            smiles_input = root / "input.txt"
+            smiles_input.write_text("CC\n \n")
             smiles_path = root / "smiles.txt"
 
-            records, skipped = prepare_smiles.extract_isomers(xml_path)
+            records, skipped = prepare_smiles.read_smiles(smiles_input)
             prepare_smiles.write_smiles(
                 [record["smiles"] for record in records], smiles_path
             )
@@ -155,6 +139,29 @@ class PrepareSmilesTests(unittest.TestCase):
                 (output_dir / "iso_00001" / "iso_00001.smi").read_text(),
                 "CCO\n",
             )
+
+    def test_directory_loader_rejects_non_txt_input(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            smiles_path = root / "smiles.xml"
+            smiles_path.write_text("<smiles>CCO</smiles>\n")
+            output_dir = root / "isomers"
+
+            with (
+                patch.object(
+                    create_data_directories.sys,
+                    "argv",
+                    [
+                        "create_data_directories.py",
+                        str(smiles_path),
+                        str(output_dir),
+                    ],
+                ),
+                self.assertRaises(SystemExit) as error,
+            ):
+                create_data_directories.main()
+
+            self.assertEqual(error.exception.code, 1)
 
 
 if __name__ == "__main__":

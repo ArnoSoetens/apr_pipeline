@@ -9,7 +9,7 @@
     python submit_arrays.py analysis --submit      # only the analysis
 
 Setup
-    If no data point folders exist yet, SMILES are prepared from the enumerator XML automatically.
+    If no data point folders exist yet, they are created from the configured SMILES list.
     Data points without complete windows are cut into tasks of a few data points; each task runs main.py for its
     data points. A failed data point gets a setup_failed.txt and is left out next time (--retry-failed).
     The 'all' command chains setup, simulations, analysis and collection. Setting up serially is
@@ -55,15 +55,12 @@ SL = CFG["slurm"]
 
 
 def ensure_data_directories():
-    """Prepare configured SMILES and create data point folders when none exist yet."""
+    """Create data point folders from the configured SMILES list when none exist yet."""
     if DATA.is_dir() and data_points():
         return
 
     pipeline_dir = Path(CFG["directories"]["pipeline"])
     creator = pipeline_dir / "create_data_directories.py"
-    preparer = pipeline_dir / "prepare_smiles.py"
-    print(f"\n[directories] preparing SMILES from {CFG['directories']['input_xml']}")
-    subprocess.run([sys.executable, str(preparer)], cwd=pipeline_dir, check=True)
     smiles_path = CFG["directories"]["smiles_list"]
     print(f"[directories] creating data point folders from {smiles_path}")
     subprocess.run(
@@ -384,7 +381,7 @@ def main():
             submit_points("setup", sorted(names), args.points_per_task or SL["setup_data_points_per_task"],
                           None, args.submit, stamp)
         elif not dps:
-            print(f"\nno data point folders were created in {DATA}; check the configured input XML")
+            print(f"\nno data point folders were created in {DATA}; check the configured SMILES list")
         else:
             print("\n[setup] nothing to set up")
         if failed_names and not args.retry_failed:

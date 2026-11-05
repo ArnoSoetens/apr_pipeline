@@ -1,4 +1,5 @@
 """Remove transient files from a successfully analyzed data point."""
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -18,8 +19,10 @@ PLOT_FILES = {
 }
 
 
-def cleanup_data_point(data_point):
-    data_dir = Path(CFG["directories"]["data"]).resolve()
+def cleanup_data_point(data_point, data_dir=None):
+    data_dir = Path(
+        CFG["directories"]["data"] if data_dir is None else data_dir
+    ).expanduser().resolve()
     data_point = Path(data_point).resolve()
     if data_point.parent != data_dir or data_point == data_dir:
         raise ValueError(f"Refusing to clean data point outside {data_dir}: {data_point}")
@@ -88,3 +91,48 @@ def cleanup_data_point(data_point):
         f"cleanup {data_point.name}: removed {removed} file(s) and "
         f"{removed_directories} empty director{'y' if removed_directories == 1 else 'ies'}"
     )
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Remove transient files from successfully analyzed data points."
+    )
+    parser.add_argument(
+        "names",
+        nargs="*",
+        metavar="NAME",
+        help="data-point folder names (default: all analyzed points in the data directory)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path(CFG["directories"]["data"]),
+        help="data directory to clean (default: configured data directory)",
+    )
+    args = parser.parse_args()
+
+    data_dir = args.data_dir.expanduser().resolve()
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"Data directory does not exist: {data_dir}")
+
+    if args.names:
+        data_points = [data_dir / name for name in args.names]
+    else:
+        data_points = sorted(
+            path
+            for path in data_dir.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        )
+
+    for data_point in data_points:
+        if not (
+            (data_point / "results.json").is_file()
+            and (data_point / "windows").is_dir()
+        ):
+            print(f"preserving {data_point.name}: no successful analysis results")
+            continue
+        cleanup_data_point(data_point, data_dir=data_dir)
+
+
+if __name__ == "__main__":
+    main()

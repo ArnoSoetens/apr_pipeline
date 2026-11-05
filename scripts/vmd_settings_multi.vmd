@@ -84,3 +84,53 @@ proc hide_all_but_first {} {
         }
     }
 }
+
+# ---------------------------------------------------------------------------
+# Arrow-key molecule cycling
+#
+# Right arrow  -> show next molecule  (wraps around)
+# Left arrow   -> show previous molecule
+#
+# Keys are bound to the OpenGL display window; click the 3D viewport
+# once to give it focus if the arrows are not responding.
+# ---------------------------------------------------------------------------
+
+proc _mol_show_index {idx} {
+    set mol_list [molinfo list]
+    set n [llength $mol_list]
+    if {$n == 0} return
+
+    # Wrap-around index
+    set idx [expr {$idx % $n}]
+
+    # Hide all, then show only the target
+    foreach molid $mol_list {
+        mol off $molid
+    }
+    set target [lindex $mol_list $idx]
+    mol on  $target
+    mol top $target
+    display resetview
+    puts "Molecule $idx / [expr {$n - 1}]: [molinfo $target get name]"
+}
+
+proc _mol_current_index {} {
+    set mol_list [molinfo list]
+    set top [molinfo top]
+    set idx [lsearch $mol_list $top]
+    # Fallback: scan for the first drawn molecule if top isn't in the list
+    if {$idx < 0} {
+        set idx 0
+        foreach molid $mol_list {
+            if {[molinfo $molid get drawn]} { break }
+            incr idx
+        }
+    }
+    return $idx
+}
+
+proc next_mol {} { _mol_show_index [expr {[_mol_current_index] + 1}] }
+proc prev_mol {} { _mol_show_index [expr {[_mol_current_index] - 1}] }
+
+user add key Right { next_mol }
+user add key Left  { prev_mol }

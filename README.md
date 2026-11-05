@@ -19,7 +19,7 @@ project/
 │   ├── config_env.py      bash cannot read TOML: prints `export` lines for run.sh / open_windows.sh
 │   ├── make_inputs.py     templates/*.in  ->  inputs/*.in  (filled from config.toml)
 │   └── templates/         the three Amber .in files with ${placeholders}
-└── data/                  BCD.pdb / .mol2 / .frcmod, data_input.xml, iso_00001/, ...
+└── data/                  BCD.pdb / .mol2 / .frcmod, SMILES .txt, iso_00001/, ...
 ```
 
 * Needs Python >= 3.11 (tomllib), i.e. your `paprika` environment.
@@ -60,23 +60,20 @@ the regions outside it are parabolic between the bounds and linear beyond
 ## Setup: serial or as an array
 
 ```
-python scripts/main.py                   # serial: folders from the XML, then every data point that needs setup
+python scripts/main.py                   # serial: folders from the configured SMILES list, then every data point that needs setup
 python scripts/main.py --force           # ... also redo the complete ones
 python scripts/main.py iso_00001 iso_00002   # just these (what an array task does)
 
-python scripts/submit_arrays.py setup --submit        # creates data point folders from the XML on first run
+python scripts/submit_arrays.py setup --submit        # creates data point folders from the configured SMILES list
                                                       # one array task = a few data points (slurm.setup_*)
 python scripts/submit_arrays.py setup --retry-failed --submit
 ```
 
-Before directory creation, `apr_pipeline/prepare_smiles.py` converts the enumerator XML to
-`directories.smiles_list` (one SMILES per line). Functionalization is optional and is disabled by
-default; set `functionalize.enabled = true` to make RDKit products from the fragments in
-`[functionalize.groups]`. The products are canonicalized and deduplicated in the same list. The
-directory creator then writes one `isomers.csv` with `folder,smiles` columns. The default site
-strategy is the two endpoints of the carbon backbone. H is replaced whenever available; an F is
-used only for a terminal CF3 endpoint. Set `parametrize.net_charge = "auto"` (the default) to pass
-each selected molecule's RDKit formal charge to antechamber.
+Create or edit the SMILES text file locally before submitting. By default, the array script reads
+`data/Seven_PFAS.txt` (`directories.smiles_list` in `config.toml`), which must contain one SMILES
+per line, and creates the data-point folders and `isomers.csv` from that file when no data-point
+folders exist yet. XML-to-text conversion must be done separately before running the pipeline. The
+`setup` command then submits the usual per-data-point setup jobs.
 
 * A data point that fails gets `setup_failed.txt` with the reason (shown by `status`); success removes it.
   The `setup` array leaves failed data points out unless you pass `--retry-failed`.
@@ -124,6 +121,9 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   incomplete, those logs are retained. Worklists and logs from setup, other batches, or non-batch
   jobs are not removed. `open_windows.sh` uses the retained `a000` topology when another selected
   window has no local topology.
+  To clean already-analyzed data points manually, run
+  `python scripts/cleanup.py --data-dir ../data`. It applies the same retention rules and skips
+  points without `results.json`; add data-point names to limit cleanup to selected folders.
 * Windows simulated before the markers existed: if you know they are complete,
   `for w in data/*/windows/*/; do touch "${w}production2.done"; done` marks them
   (a plain `touch data/*/windows/*/production2.done` does NOT work: the `*` only matches files that already exist).
