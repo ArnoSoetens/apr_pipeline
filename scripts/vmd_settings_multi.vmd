@@ -60,13 +60,14 @@ proc apply_clash_reps {molid guest_atom_index} {
 display projection Orthographic
 display depthcue off
 color Display Background white
+color Labels Bonds black
 axes location Off
 animate style Loop
 
 # Playback speed slider (Extensions > Analysis > Animate window) ranges
 # from -1.0 (slowest) to 1.0 (fastest), with 0.0 the default middle.
-# Set to 25% of that range: -0.5
-animate speed 0.25
+# Set to 25% of that range: 0.75
+animate speed 0.75
 
 # By default VMD shows every loaded molecule at once, which gets crowded
 # fast with several windows stacked in the same view. This hides all but
@@ -110,7 +111,7 @@ proc _mol_show_index {idx} {
     set target [lindex $mol_list $idx]
     mol on  $target
     mol top $target
-    display resetview
+    #display resetview
     puts "Molecule $idx / [expr {$n - 1}]: [molinfo $target get name]"
 }
 
