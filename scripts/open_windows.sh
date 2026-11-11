@@ -8,6 +8,7 @@
 # Usage (from anywhere):
 #   ./open_windows.sh <datapoint> <windows...>
 #   ./open_windows.sh --complex-only iso_00001 - iso_00010
+#   ./open_windows.sh --complex-only
 #   ./open_windows.sh --failed-clashes
 #   ./open_windows.sh --failed-clashes iso_00001-iso_00010
 #
@@ -81,7 +82,7 @@ fi
 
 if ! $COMPLEX_ONLY && ! $FAILED_CLASHES && [[ ${#POSITIONAL[@]} -lt 2 ]]; then
     echo "Usage: $0 [--traj FILE] [--no-cpptraj] [--no-vmd] [-v] <datapoint> <windows...>" >&2
-    echo "       $0 --complex-only <datapoint/range...>" >&2
+    echo "       $0 --complex-only [datapoint/range...]" >&2
     echo "       $0 --failed-clashes [datapoint/range...]" >&2
     echo "  e.g. $0 iso_00001 a000-a005" >&2
     exit 1
@@ -149,14 +150,14 @@ run_pdb_mode() {
     local datapoint pdb_path report_path guest_path guest_atom_index
     local -a valid_names=() valid_pdbs=() valid_indices=()
 
-    if $COMPLEX_ONLY && [[ ${#POSITIONAL[@]} -eq 0 ]]; then
-        echo "Error: --complex-only needs one or more data points/ranges." >&2
-        return 1
-    fi
-
     if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
         expand_datapoint_args || return 1
         local -a selected_datapoints=("${EXPANDED_DATAPOINTS[@]}")
+    elif [[ "$mode" == "complex" ]]; then
+        local -a selected_datapoints=()
+        while IFS= read -r -d '' pdb_path; do
+            selected_datapoints+=("$(basename "$(dirname "$pdb_path")")")
+        done < <(find "$DATA_DIR" -mindepth 2 -maxdepth 2 -type f -name "$COMPLEX_PREFIX.pdb" -print0 | sort -z)
     else
         local -a selected_datapoints=()
         while IFS= read -r -d '' report_path; do
@@ -223,6 +224,7 @@ run_pdb_mode() {
                 fi
             done
         else
+            echo "set_cycle_offset 1"
             echo "set host_molid [mol new {$HOST_PDB} type pdb waitfor all]"
             echo "mol rename \$host_molid {$HOST_PREFIX}"
             for i in "${!valid_names[@]}"; do

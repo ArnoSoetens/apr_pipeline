@@ -7,37 +7,51 @@ import csv
 import json
 import os
 import sys
+from pathlib import Path
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 
 from apr_config import CFG
+from datapoints import has_complete_run
 
-data_dir = CFG["directories"]["data"]
 
-rows = []
-missing = 0
-for name in sorted(os.listdir(data_dir)):
-    data_point_dir = os.path.join(data_dir, name)
-    smi_file = os.path.join(data_point_dir, f"{name}.smi")
-    if not os.path.isfile(smi_file):              # not a data point folder
-        continue
+def collect_result_rows(data_dir):
+    rows = []
+    missing = 0
+    for data_point in sorted(Path(data_dir).iterdir()):
+        if not data_point.is_dir():
+            continue
 
-    result_file = os.path.join(data_point_dir, "results.json")
-    if not os.path.isfile(result_file):
-        missing += 1
-        continue
+        result_file = data_point / "results.json"
+        if not result_file.is_file():
+            if has_complete_run(data_point):
+                missing += 1
+            continue
 
-    with open(smi_file) as f:
-        smiles = f.read().strip()
-    with open(result_file) as f:
-        result = json.load(f)
-    rows.append([name, smiles, result["dG_bind"], result["dG_sem"]])
+        # A saved result is durable completion evidence after cleanup removes trajectories.
+        smiles_file = data_point / f"{data_point.name}.smi"
+        smiles = smiles_file.read_text().strip() if smiles_file.is_file() else ""
+        result = json.loads(result_file.read_text())
+        rows.append([
+            data_point.name,
+            smiles,
+            result["dG_bind"],
+            result["dG_sem"],
+        ])
+    return rows, missing
 
-with open(CFG["analysis"]["results_csv"], "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["smiles_folder", "smiles", "dG_bind_kcal_per_mol", "sem"])
-    writer.writerows(rows)
 
-print(f"wrote {len(rows)} results to {CFG['analysis']['results_csv']} "
-      f"({missing} data points have no results.json yet)")
+def main():
+    rows, missing = collect_result_rows(CFG["directories"]["data"])
+    with open(CFG["analysis"]["results_csv"], "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["smiles_folder", "smiles", "dG_bind_kcal_per_mol", "sem"])
+        writer.writerows(rows)
+
+    print(f"wrote {len(rows)} results to {CFG['analysis']['results_csv']} "
+          f"({missing} complete data points have no results.json yet)")
+
+
+if __name__ == "__main__":
+    main()

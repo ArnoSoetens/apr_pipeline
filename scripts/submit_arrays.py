@@ -48,15 +48,24 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 
 from apr_config import CFG
-from datapoints import DATA, FAILED_FILE, WINDOWS, data_points, failure_reason, scan
+from datapoints import (
+    DATA,
+    FAILED_FILE,
+    WINDOWS,
+    data_points,
+    failure_reason,
+    prepared_data_points,
+    scan,
+    setup_data_points,
+)
 
 LOGS = Path(CFG["directories"]["logs"])
 SL = CFG["slurm"]
 
 
 def ensure_data_directories():
-    """Create data point folders from the configured SMILES list when none exist yet."""
-    if DATA.is_dir() and data_points():
+    """Create folders only when no SMILES or fully prepared data points exist."""
+    if DATA.is_dir() and (data_points() or prepared_data_points(data_dir=DATA)):
         return
 
     pipeline_dir = Path(CFG["directories"]["pipeline"])
@@ -337,7 +346,7 @@ def main():
     if args.command != "status":
         ensure_data_directories()
 
-    dps = data_points(args.only)
+    dps = setup_data_points(args.only)
     if args.command == "status":
         show_status(dps)
         return

@@ -40,23 +40,33 @@ from structure import *
 from parametrize import *
 from placement import *
 from apr_setup import *
-from datapoints import SETUP_STATES, clear_failed, data_points, mark_failed, scan
+from datapoints import (
+    SETUP_STATES,
+    clear_failed,
+    mark_failed,
+    prepared_data_points,
+    scan,
+    setup_data_points,
+)
 
 
 serial = not args.names
 if serial:
-    # no names given: make data folders directly from the configured text file
-    subprocess.run(
-        [
-            sys.executable,
-            "create_data_directories.py",
-            CFG["directories"]["smiles_list"],
-            data_dir,
-        ],
-        cwd=pipeline_dir,
-        check=True,
-    )
-    names = [dp.name for dp in data_points()]
+    smiles_list = CFG["directories"]["smiles_list"]
+    if not prepared_data_points() and (
+        os.path.isfile(smiles_list) or not setup_data_points()
+    ):
+        subprocess.run(
+            [
+                sys.executable,
+                "create_data_directories.py",
+                smiles_list,
+                data_dir,
+            ],
+            cwd=pipeline_dir,
+            check=True,
+        )
+    names = [dp.name for dp in setup_data_points()]
 else:
     names = args.names
 
@@ -72,34 +82,48 @@ for i, name in enumerate(names, 1):
     print(f"[{i}/{len(names)}] {name}", flush=True)
 
     smi_file = os.path.join(data_point_dir, f"{name}.smi")
-    if not os.path.isfile(smi_file):                   # not a data point folder
-        print(name, "SKIPPED: no .smi file")
+    prepared_files = (
+        os.path.join(data_point_dir, f"{GUEST}.pdb"),
+        os.path.join(data_point_dir, f"{GUEST}.mol2"),
+        os.path.join(data_point_dir, f"{GUEST}.frcmod"),
+        os.path.join(data_point_dir, f'{CFG["naming"]["complex_prefix"]}.pdb'),
+    )
+    use_prepared_files = all(os.path.isfile(path) for path in prepared_files)
+    has_smiles = os.path.isfile(smi_file)
+    if not has_smiles and not use_prepared_files:
+        print(
+            name,
+            f"SKIPPED: needs {name}.smi or all prepared guest files "
+            f"({GUEST}.pdb, {GUEST}.mol2, {GUEST}.frcmod, "
+            f'{CFG["naming"]["complex_prefix"]}.pdb)',
+        )
         n_skipped += 1
         continue
     if serial and not args.force and scan(data_point_dir)[0] not in SETUP_STATES:
         print(name, "SKIPPED: windows are complete (--force redoes them)")
         n_skipped += 1
         continue
-    with open(smi_file) as f:
-        smiles = f.read().strip()
-                  # the real SMILES
 
     try:
-        mol = smiles_to_pdb(smiles, os.path.join(data_point_dir, f"{GUEST}.pdb"))
-    except ValueError as e:
-        print(name, "FAILED:", e)
-        mark_failed(data_point_dir, e)
-        n_failed += 1
-        continue
+        if use_prepared_files:
+            mol = Chem.MolFromPDBFile(prepared_files[0], removeHs=False)
+            if mol is None:
+                raise ValueError(f"could not read prepared guest PDB: {prepared_files[0]}")
+        else:
+            with open(smi_file) as f:
+                smiles = f.read().strip()
+            mol = smiles_to_pdb(smiles, prepared_files[0])
 
-    try:
         chain = find_carbon_backbone_chain(mol)
+        if len(chain) < 2:
+            raise ValueError(f"guest needs at least two connected carbon atoms: {prepared_files[0]}")
         G1, G2 = pick_backbone_alignment_atoms(chain)
 
-        guest_aligned = place_guest_in_cavity(mol, G1, G2)[0]
-        generate_pdb(host,guest_aligned,out_dir=data_point_dir)
+        if not use_prepared_files:
+            guest_aligned = place_guest_in_cavity(mol, G1, G2)[0]
+            generate_pdb(host, guest_aligned, out_dir=data_point_dir)
 
-        parametrize(data_point_dir, net_charge=Chem.GetFormalCharge(mol))
+            parametrize(data_point_dir, net_charge=Chem.GetFormalCharge(mol))
 
         setup_datapoint(data_point_dir, host_dir, G1, G2)
     except Exception as e:

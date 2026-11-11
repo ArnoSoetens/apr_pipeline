@@ -44,7 +44,7 @@ guest_resnum  = 2                 # residue number of the guest in the PDB files
 
 # ---------------------------------------------------------------------------
 [parametrize]                # antechamber / parmchk2
-net_charge    = "auto"       # "auto" uses the RDKit formal charge of each guest; or set an integer
+net_charge    = -1       # "auto" uses the RDKit formal charge of each guest; or set an integer
 charge_method = "bcc"
 atom_type     = "gaff"       # antechamber -at, and leaprc.<atom_type> in tleap
 parmchk_set   = 1            # parmchk2 -s  (1 = gaff, 2 = gaff2)

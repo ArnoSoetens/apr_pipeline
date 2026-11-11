@@ -7,8 +7,23 @@ Usage:
 import csv
 import os
 import sys
+from pathlib import Path
 
 from apr_config import CFG
+
+
+def isomer_rows(isomers_dir):
+    """Return folder/SMILES rows only for directories with a matching .smi file."""
+    rows = []
+    for directory in sorted(Path(isomers_dir).iterdir()):
+        if not directory.is_dir():
+            continue
+        smiles_file = directory / f"{directory.name}.smi"
+        if not smiles_file.is_file():
+            continue
+        with smiles_file.open() as f:
+            rows.append([directory.name, f.read().strip()])
+    return rows
 
 
 def main():
@@ -29,7 +44,6 @@ def main():
         print(f"Error: SMILES file not found: {smiles_path}", file=sys.stderr)
         sys.exit(1)
     os.makedirs(isomers_dir, exist_ok=True)
-    rows = []
     product_count = 0
     with open(smiles_path) as smiles_file:
         for line_number, line in enumerate(smiles_file, start=1):
@@ -47,12 +61,11 @@ def main():
             with open(os.path.join(smiles_dir, f"{dir_name}.smi"), "w") as smiles_output:
                 smiles_output.write(smiles + "\n")
 
-            rows.append([dir_name, smiles])
 
     with open(os.path.join(isomers_dir, "isomers.csv"), "w", newline="") as mapping_file:
         writer = csv.writer(mapping_file)
         writer.writerow(["folder", "smiles"])
-        writer.writerows(rows)
+        writer.writerows(isomer_rows(isomers_dir))
 
     print(f"Wrote {product_count} isomer directories to {isomers_dir}")
 

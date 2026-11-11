@@ -32,12 +32,14 @@ project/
 
 ```
 ./scripts/open_windows.sh --complex-only iso_00001 - iso_00010
+./scripts/open_windows.sh --complex-only
 ./scripts/open_windows.sh --failed-clashes
 ./scripts/open_windows.sh --failed-clashes iso_00001-iso_00010
 ```
 
 `--complex-only` opens the saved host+guest complex PDBs for the selected data
-points. Data-point ranges accept either `iso_00001-iso_00010` or
+points. With no data points supplied, it opens every configured complex PDB in
+the data directory. Data-point ranges accept either `iso_00001-iso_00010` or
 `iso_00001 - iso_00010`. `--failed-clashes` scans `setup_failed.txt` files for
 clash reports, loads the configured host PDB once and each failed guest PDB as
 a separate molecule, and highlights the nearest guest atom with a Licorice
@@ -46,6 +48,57 @@ Failed guest poses are written to the normal guest PDB (`UNL.pdb` by default).
 Only the host is initially visible; use VMD's molecule list to switch to a
 guest molecule. Re-run setup/placement to regenerate guest poses after changing
 the placement or clash-detection algorithm.
+
+## Guest-only implicit-solvent simulation
+
+To simulate a guest separately from the host, use a guest-only PDB and its
+parameterized MOL2:
+
+```sh
+python scripts/simulate_guest.py guest.pdb guest.mol2
+python scripts/simulate_guest.py guest.pdb guest.mol2 \
+  --frcmod guest.frcmod --output-dir guest_run
+```
+
+The script builds an Amber topology with LEaP and runs minimization,
+equilibration, and production using the force field, GB model, temperature,
+timestep, thermostat, and run lengths configured in `config.toml`. If
+`--frcmod` is omitted, `parmchk2` generates one from the MOL2. The PDB must
+contain one guest residue whose residue name and atom names match the MOL2;
+the MOL2 must already contain the desired GAFF atom types and partial charges.
+
+This is **GB implicit solvent**, not a periodic box of explicit water. The
+simulation is unrestrained and writes its topology, input files, logs, restart
+files, and trajectories to the output directory (by default
+`<PDB-stem>_implicit`). AmberTools (`parmchk2`, `tleap`) and the configured
+Amber `pmemd` executable must be available in the environment.
+
+To run every immediate subdirectory of the configured data directory that has
+the configured guest PDB, MOL2, and FRCMOD files, use the batch runner.
+Directory names do not need to use the `iso_` prefix:
+
+```sh
+python scripts/simulate_guest_batch.py --cpus-per-task 24
+python scripts/simulate_guest_batch.py --simulation apr-p000 --cpus-per-task 24
+```
+
+In a Slurm job, it defaults to `SLURM_CPUS_PER_TASK`, so the job script can run
+`python "$SLURM_SUBMIT_DIR/scripts/simulate_guest_batch.py" --simulation apr-p000`
+after activating the Python and Amber environments to select the p000 workflow.
+Each data point writes into its own output directory (`guest_implicit/` for the
+default mode or `guest_apr_p000/` for p000), uses serial `pmemd` to keep each
+concurrent simulation to one CPU, and records command output in
+`batch.log`. Directories missing any of the three guest files are reported and
+skipped. Simulation failures are reported without stopping other data points;
+after all jobs finish, the batch command exits nonzero if any simulation failed.
+
+The `apr-p000` mode instead runs one host-free APR pull window per data point:
+the guest plus DM1/DM2/DM3, aligned and restrained using pAPRika and the APR
+settings in `config.toml`. It writes to `guest_apr_p000/`. Use
+`--simulation apr-p000` in a Slurm batch job to select this mode. Host-anchor
+and host-conformational restraints are omitted. The third guest restraint
+matches the current APR setup, where its three masks define an angle in
+pAPRika despite the config field being named `torsion_target`.
 
 Not in the config on purpose: the `#SBATCH` lines (sbatch reads them before anything else runs),
 the BCD-specific per-glucose restraint atom numbers in `apr_setup.set_restraints`,
@@ -69,11 +122,56 @@ python scripts/submit_arrays.py setup --submit        # creates data point folde
 python scripts/submit_arrays.py setup --retry-failed --submit
 ```
 
+For custom guest structures, create a folder under `data/` for each input and
+put exactly one input PDB (with any filename) in each folder. Then run:
+
+```
+python apr_pipeline/placement.py             # process all data-point folders
+python apr_pipeline/placement.py my_guest    # process only data/my_guest/
+```
+
+Placement writes `UNL.pdb` and the host-guest complex PDB to the same folder as
+the input. The configured host (`data/BCD.pdb` by default) and placement
+settings in `config.toml` are used. Existing generated `UNL.pdb` and
+`BCD-UNL.pdb` files are ignored when finding the input; folders must contain
+exactly one other PDB.
+
+To run APR setup on a datapoint whose guest files are already prepared, place
+`UNL.pdb`, `UNL.mol2`, `UNL.frcmod`, and `BCD-UNL.pdb` (using the configured
+guest and complex prefixes) in its data folder, then run:
+
+```
+python scripts/main.py <data-point>
+```
+
+`main.py` uses those files as-is and runs setup without regenerating or
+parametrizing them. Such folders are also discovered when `main.py` is run
+without names. Folders without a `.smi` file and without all four prepared
+files are skipped.
+
+To parametrize guest PDBs separately, run:
+
+```
+python apr_pipeline/parametrize.py                       # all folders containing UNL.pdb
+python apr_pipeline/parametrize.py my_guest --net-charge 0
+```
+
+When `parametrize.net_charge = "auto"` in `config.toml`, standalone
+parametrization requires `--net-charge` because a PDB file alone does not
+reliably provide the guest's formal charge. `scripts/main.py` continues to
+derive the charge from each SMILES molecule and pass it to the same
+parametrization function.
+
 Create or edit the SMILES text file locally before submitting. By default, the array script reads
 `data/Seven_PFAS.txt` (`directories.smiles_list` in `config.toml`), which must contain one SMILES
-per line, and creates the data-point folders and `isomers.csv` from that file when no data-point
-folders exist yet. XML-to-text conversion must be done separately before running the pipeline. The
-`setup` command then submits the usual per-data-point setup jobs.
+per line. Array setup creates data-point folders from that file only when no `.smi` or fully
+prepared data-point folders exist. Serial `main.py` can use existing `.smi` folders without the
+list file, and it does not regenerate guest inputs when fully prepared data points are present.
+APR setup and analysis discover both SMILES-based and fully prepared data points. Analysis only
+runs when every configured window contains the configured production trajectory (normally
+`production.nc`). Result collection includes analyzed prepared data points without a `.smi` file,
+leaving the SMILES field empty. XML-to-text conversion must be done separately before running the
+pipeline. The `setup` command then submits the usual per-data-point setup jobs.
 
 * A data point that fails gets `setup_failed.txt` with the reason (shown by `status`); success removes it.
   The `setup` array leaves failed data points out unless you pass `--retry-failed`.
@@ -185,6 +283,64 @@ energy statistic, not work or a binding free-energy contribution. No
 `analysis.enhanced` continues to control the supplementary histogram plots and
 coordinate metadata in `results.json`. The convergence plot and phase estimates
 are generated regardless of that setting.
+
+## Restraint-angle histograms
+
+`paprika.analysis.fe_calc.collect_data()` reads trajectories to report the
+coordinates of restraints in `windows/restraints.json`. This helper plots the
+first angle restraint's sampled coordinate by attachment window, using the
+atom indices and target stored in that JSON rather than assuming a particular
+guest atom name. It uses MDTraj to read the trajectories.
+
+```sh
+python scripts/angle_histogram.py
+```
+
+By default this reads `data/PFBA/windows/{a000,a001,a002,a003,a004,a015}/production.nc`
+and plots the first angle restraint, `DM2:DUM - DM1:DUM - UNL:C1`, with its
+configured target shown as a dashed line. It writes the per-window histogram
+and frame-by-frame CSV to `data/PFBA/analysis/`. Use `--windows`, `--data-dir`,
+`--output-dir`, or `--bins` to override those defaults.
+
+## Dihedral distributions
+
+Compare rotatable guest dihedrals between the unrestrained `a000` and restrained
+`a015` windows by giving just the data-point name:
+
+```sh
+python other/dihedral_check.py iso_00001
+```
+
+If no dihedrals are supplied, the script reads the guest mol2 from the
+datapoint folder (using `naming.guest_prefix` in `config.toml`) and
+automatically finds its rotatable torsions. It calls RDKit's
+`TorsionFingerprints.CalculateTorsionLists`, takes its non-ring torsions
+(using RDKit's rotatable-bond rules), then maps each torsion's mol2 atom names
+to the matching guest-residue atoms in the Amber topology. GAFF atom-type
+labels are normalized for RDKit parsing; atom names and bond records are
+preserved. The topology is read from `a000`; trajectories and the data
+directory follow `config.toml`. By default, `a000` is compared with `a015`;
+pass `--windows a003 a010` to choose another pair:
+
+```sh
+python other/dihedral_check.py iso_00013 --windows a003 a010 \
+  -first 149,150,151,152
+```
+
+You can still provide atom quadruplets explicitly with `-first`, `-second`,
+`-third`, positional arguments, `--dihedral`, or `--dihedral-file`. Automatic
+detection runs by default only when none are specified; `--guest-mol2` can be
+used to select another mol2 file for detection.
+
+The first selected window is treated as unrestrained and the second as
+restrained. The topology continues to come from `a000`. Results go to
+`data/<datapoint>/dihedral_out/`, including
+`histogram_counts.csv` (counts per angle bin), count-based histogram plots,
+summary statistics, and the timeseries CSV. A single shared timeseries figure
+contains a subplot for each dihedral; its filename includes all selected atom
+sets so different selections do not overwrite each other's plots. The existing
+`--dihedral`, `--dihedral-file`, and explicit trajectory options remain
+available.
 
 ## Acknowledgments and references
 

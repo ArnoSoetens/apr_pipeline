@@ -22,7 +22,7 @@ run_window() {
     cd "$window" || return 1     # never run pmemd in the wrong folder
 
     # a finished window is skipped, so a resubmitted array only redoes what is left
-    if [ -f "$DONE_MARKER" ]; then
+    if [ -f "$DONE_MARKER" ] && [ -f production.nc ]; then
         echo "[$(date '+%H:%M:%S')] SKIP  ${window} (already done)"
         return 0
     fi

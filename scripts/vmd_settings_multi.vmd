@@ -66,15 +66,11 @@ animate style Loop
 
 # Playback speed slider (Extensions > Analysis > Animate window) ranges
 # from -1.0 (slowest) to 1.0 (fastest), with 0.0 the default middle.
-# Set to 25% of that range: 0.75
 animate speed 0.75
 
 # By default VMD shows every loaded molecule at once, which gets crowded
 # fast with several windows stacked in the same view. This hides all but
-# the first-loaded molecule so you see one window at a time; use the
-# Molecule menu (double-click the "D" column) to toggle visibility for
-# whichever window you want to inspect, or use the VMD Main window's
-# molecule list to step through them.
+# the first-loaded molecule so you see one window at a time.
 proc hide_all_but_first {} {
     set mols [molinfo list]
     if {[llength $mols] < 2} { return }
@@ -92,42 +88,52 @@ proc hide_all_but_first {} {
 # Right arrow  -> show next molecule  (wraps around)
 # Left arrow   -> show previous molecule
 #
+# In --failed-clashes mode the host PDB is loaded as molecule 0 and must
+# stay visible at all times. Call  set_cycle_offset 1  from the load script
+# to skip it; the default of 0 cycles all molecules.
+#
 # Keys are bound to the OpenGL display window; click the 3D viewport
 # once to give it focus if the arrows are not responding.
 # ---------------------------------------------------------------------------
 
+# How many leading molecules to leave alone (0 = cycle everything).
+set _mol_cycle_offset 0
+
+proc set_cycle_offset {n} {
+    global _mol_cycle_offset
+    set _mol_cycle_offset $n
+}
+
 proc _mol_show_index {idx} {
+    global _mol_cycle_offset
     set mol_list [molinfo list]
     set n [llength $mol_list]
-    if {$n == 0} return
+    set cycleable [expr {$n - $_mol_cycle_offset}]
+    if {$cycleable <= 0} return
 
-    # Wrap-around index
-    set idx [expr {$idx % $n}]
+    # Wrap-around within the cycleable range
+    set idx [expr {$idx % $cycleable}]
 
-    # Hide all, then show only the target
-    foreach molid $mol_list {
+    # Hide all cycleable molecules, leave the offset ones untouched
+    foreach molid [lrange $mol_list $_mol_cycle_offset end] {
         mol off $molid
     }
-    set target [lindex $mol_list $idx]
+    set target [lindex $mol_list [expr {$_mol_cycle_offset + $idx}]]
     mol on  $target
     mol top $target
-    #display resetview
-    puts "Molecule $idx / [expr {$n - 1}]: [molinfo $target get name]"
+    puts "Molecule $idx / [expr {$cycleable - 1}]: [molinfo $target get name]"
 }
 
 proc _mol_current_index {} {
+    global _mol_cycle_offset
     set mol_list [molinfo list]
     set top [molinfo top]
-    set idx [lsearch $mol_list $top]
-    # Fallback: scan for the first drawn molecule if top isn't in the list
-    if {$idx < 0} {
-        set idx 0
-        foreach molid $mol_list {
-            if {[molinfo $molid get drawn]} { break }
-            incr idx
-        }
+    set abs_idx [lsearch $mol_list $top]
+    if {$abs_idx < $_mol_cycle_offset} {
+        # top is one of the pinned molecules; default to first cycleable
+        return 0
     }
-    return $idx
+    return [expr {$abs_idx - $_mol_cycle_offset}]
 }
 
 proc next_mol {} { _mol_show_index [expr {[_mol_current_index] + 1}] }
@@ -135,3 +141,7 @@ proc prev_mol {} { _mol_show_index [expr {[_mol_current_index] - 1}] }
 
 user add key Right { next_mol }
 user add key Left  { prev_mol }
+user add key Up   { animate goto [expr {[molinfo top get frame] - 1}] }
+user add key Down { animate goto [expr {[molinfo top get frame] + 1}] }
+user add key J    { animate speed [expr {max(-1.0, [animate speed] - 0.1)}] }
+user add key L    { animate speed [expr {min( 1.0, [animate speed] + 0.1)}] }

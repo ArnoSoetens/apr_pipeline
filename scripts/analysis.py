@@ -14,6 +14,7 @@ data_dir = CFG["directories"]["data"]
 sys.path.insert(0, CFG["directories"]["pipeline"])
 
 from apr_analysis import run
+from datapoints import has_complete_run
 
 parser = argparse.ArgumentParser(description="Analyze completed APR data points.")
 parser.add_argument("--clean-after-analysis", action="store_true",
@@ -35,6 +36,9 @@ for name in names:
     data_point_dir = os.path.join(data_dir, name)
 
     if not os.path.isdir(os.path.join(data_point_dir, "windows")):
+        continue
+    if not has_complete_run(data_point_dir):
+        print(f"SKIP {name}: not all windows have {CFG['analysis']['trajectory']}")
         continue
 
     # the real SMILES, read from the .smi file in this folder

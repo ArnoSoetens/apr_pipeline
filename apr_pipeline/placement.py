@@ -22,6 +22,7 @@ Files written into out_dir by generate_pdb():
                                         UNL residue set to 2
 Everything else in the PDB text is left exactly as RDKit wrote it.
 """
+import argparse
 from pathlib import Path
 
 import numpy as np
@@ -72,8 +73,18 @@ def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=CFG["placemen
     backbone_axis = backbone_axis / np.linalg.norm(backbone_axis)
     backbone_midpoint = (coords[b1_idx] + coords[b2_idx]) / 2.0
 
-    R = rotation_matrix_from_vectors(backbone_axis, cavity_axis)
-    new_coords = (coords - backbone_midpoint) @ R.T + cavity_center
+    centered_coords = coords - backbone_midpoint
+    rotations = (
+        rotation_matrix_from_vectors(backbone_axis, cavity_axis),
+        rotation_matrix_from_vectors(backbone_axis, -np.asarray(cavity_axis)),
+    )
+    R = min(
+        rotations,
+        key=lambda rotation: np.sum(
+            (centered_coords @ rotation.T - centered_coords) ** 2
+        ),
+    )
+    new_coords = centered_coords @ R.T + cavity_center
 
     new_mol = Chem.Mol(guest_mol)
     conf = new_mol.GetConformer()
@@ -279,3 +290,92 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"][
         raise ValueError(f"PDB post-processing failed: {e}") from e
 
     return {"guest_pdb": guest_pdb, "complex_pdb": complex_pdb, "clash": report}, print("PDB succesfully created")
+
+
+def place_custom_pdbs(data_dir=CFG["directories"]["data"], names=None):
+    """Place one input PDB from each selected data-point directory.
+
+    Input PDBs may have any filename. Generated guest and complex PDBs are
+    excluded from input discovery. Results are written to the same directory.
+    """
+    from structure import find_carbon_backbone_chain, pick_backbone_alignment_atoms
+
+    data_dir = Path(data_dir)
+    if not data_dir.is_dir():
+        raise FileNotFoundError(f"data directory does not exist: {data_dir}")
+
+    if names:
+        directories = []
+        for name in names:
+            if Path(name).name != name or name in (".", ".."):
+                raise ValueError(f"data-point name must be a directory name: {name!r}")
+            directory = data_dir / name
+            if not directory.is_dir():
+                raise FileNotFoundError(f"data-point directory does not exist: {directory}")
+            directories.append(directory)
+    else:
+        directories = sorted(path for path in data_dir.iterdir() if path.is_dir())
+
+    guest_name = f'{CFG["naming"]["guest_prefix"]}.pdb'
+    complex_name = f'{CFG["naming"]["complex_prefix"]}.pdb'
+    host_path = Path(CFG["directories"]["host"]) / f'{CFG["naming"]["host_prefix"]}.pdb'
+    host = Chem.MolFromPDBFile(str(host_path), removeHs=False)
+    if host is None:
+        raise ValueError(f"could not read host PDB: {host_path}")
+
+    failed = 0
+    placed = 0
+    for directory in directories:
+        input_pdbs = sorted(
+            path for path in directory.glob("*.pdb")
+            if path.name not in {guest_name, complex_name}
+        )
+        try:
+            if len(input_pdbs) != 1:
+                raise ValueError(
+                    f"expected exactly one input PDB (excluding {guest_name} and "
+                    f"{complex_name}), found {len(input_pdbs)}"
+                )
+            input_pdb = input_pdbs[0]
+            guest = Chem.MolFromPDBFile(str(input_pdb), removeHs=False)
+            if guest is None:
+                raise ValueError(f"could not read input PDB: {input_pdb}")
+
+            for atom in guest.GetAtoms():
+                residue_info = atom.GetPDBResidueInfo()
+                if residue_info is not None:
+                    residue_info.SetResidueName(CFG["naming"]["guest_prefix"])
+                    residue_info.SetIsHeteroAtom(True)
+
+            chain = find_carbon_backbone_chain(guest)
+            if len(chain) < 2:
+                raise ValueError(f"input PDB needs at least two connected carbon atoms: {input_pdb}")
+            b1_idx, b2_idx = pick_backbone_alignment_atoms(chain)
+            guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx)[0]
+            generate_pdb(host, guest_aligned, out_dir=directory)
+            placed += 1
+            print(f"{directory.name}: placed {input_pdb.name} -> {guest_name}", flush=True)
+        except (OSError, ValueError, RuntimeError) as error:
+            failed += 1
+            print(f"{directory.name}: FAILED: {error}", flush=True)
+
+    print(f"placement finished: {placed} placed, {failed} failed", flush=True)
+    return 1 if failed else 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Place custom PDB guests in the configured host cavity."
+    )
+    parser.add_argument(
+        "names",
+        nargs="*",
+        metavar="DATA_POINT",
+        help="data-point folders to process (default: all folders in data)",
+    )
+    args = parser.parse_args(argv)
+    return place_custom_pdbs(names=args.names or None)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

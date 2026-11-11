@@ -66,14 +66,16 @@ case "$STAGE" in
         fi
         ;;
     analysis)
-        # only analyze data points whose windows are ALL finished
+        # only analyze data points whose windows ALL have their trajectory
         READY=()
         for point in "${POINTS[@]}"; do
             complete=1
+            found_window=0
             for window in "$DATA_DIR/$point"/windows/*/; do
-                [ -f "${window}${DONE_MARKER}" ] || { complete=0; break; }
+                found_window=1
+                [ -f "${window}${TRAJECTORY}" ] || { complete=0; break; }
             done
-            if [ "$complete" -eq 1 ]; then
+            if [ "$complete" -eq 1 ] && [ "$found_window" -eq 1 ]; then
                 READY+=("$point")
             else
                 echo "SKIP $point: simulation not complete"
