@@ -82,6 +82,11 @@ python scripts/simulate_guest_batch.py --cpus-per-task 24
 python scripts/simulate_guest_batch.py --simulation apr-p000 --cpus-per-task 24
 ```
 
+Add `--clean` to either command to remove the simulation output files after a
+successful run, keeping only the `.prmtop` topology and `production.nc`
+trajectory needed by `dihedral_check.py`. Cleaning is limited to that
+simulation's output directory; failed runs retain their files and logs.
+
 In a Slurm job, it defaults to `SLURM_CPUS_PER_TASK`, so the job script can run
 `python "$SLURM_SUBMIT_DIR/scripts/simulate_guest_batch.py" --simulation apr-p000`
 after activating the Python and Amber environments to select the p000 workflow.
@@ -196,6 +201,9 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   `--windows-per-task` to override the calculated package size.
 * More tasks than `max_array_size` are split over several arrays (each with an offset into the list).
 * A finished window gets a `production2.done` file; resubmitting only puts unfinished windows in the list.
+* Analysis defaults to one data point per task and `analysis_mem` of `4G` in `config.toml`.
+  This avoids retaining PyMBAR/JAX memory across several analyses in one Python process.
+  Override the task size with `--points-per-task` or adjust `analysis_mem` for the cluster.
 * For a small job (few tasks) the script suggests a smaller `--windows-per-task`, because then all
   tasks start at once and the job finishes much sooner.
 * Later stages wait until prerequisite jobs have ended (`afterany`), whether they succeeded or failed.

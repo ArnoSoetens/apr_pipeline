@@ -3,6 +3,7 @@
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,7 +61,30 @@ def _guest_files(data_point):
     }
 
 
-def _run_one(data_point, files, simulator, output_name, pmemd_command):
+def _clean_output_dir(output_dir):
+    retained_topologies = [
+        path for path in output_dir.iterdir()
+        if path.is_file() and path.suffix == ".prmtop"
+    ]
+    production_trajectory = output_dir / "production.nc"
+    if not retained_topologies or not production_trajectory.is_file():
+        raise FileNotFoundError(
+            f"Cannot clean {output_dir}: expected at least one .prmtop "
+            "and production.nc"
+        )
+
+    for path in output_dir.iterdir():
+        if path.is_file() and (
+            path.name == "production.nc" or path.suffix == ".prmtop"
+        ):
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def _run_one(data_point, files, simulator, output_name, pmemd_command, clean=False):
     output_dir = data_point / output_name
     log_path = output_dir / "batch.log"
     command = [
@@ -94,7 +118,16 @@ def _run_one(data_point, files, simulator, output_name, pmemd_command):
             check=False,
             env=env,
         )
-        log_path.write_text(result.stdout + result.stderr, encoding="utf-8")
+        log_content = result.stdout + result.stderr
+        log_path.write_text(log_content, encoding="utf-8")
+        if clean and result.returncode == 0:
+            try:
+                _clean_output_dir(output_dir)
+            except OSError as exc:
+                log_path.write_text(
+                    f"{log_content}\nCleaning failed: {exc}\n", encoding="utf-8"
+                )
+                return data_point.name, 1, log_path, str(exc)
     except OSError as exc:
         return data_point.name, 1, log_path, str(exc)
     return data_point.name, result.returncode, log_path, ""
@@ -105,6 +138,7 @@ def run_batch(
     cpus=None,
     simulator=None,
     simulation="guest",
+    clean=False,
 ):
     data_dir = Path(data_dir).expanduser().resolve()
     worker_count = _get_cpu_count(cpus)
@@ -137,7 +171,7 @@ def run_batch(
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         futures = {
             executor.submit(
-                _run_one, point, files, simulator, output_name, "pmemd"
+                _run_one, point, files, simulator, output_name, "pmemd", clean
             ): point
             for point, files in jobs
         }
@@ -185,9 +219,17 @@ def main():
         default=DATA_DIR,
         help=f"Data-point directory (default: {DATA_DIR})",
     )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="after successful simulations, remove output files except .prmtop and production.nc",
+    )
     args = parser.parse_args()
     return run_batch(
-        args.data_dir, args.cpus_per_task, simulation=args.simulation
+        args.data_dir,
+        args.cpus_per_task,
+        simulation=args.simulation,
+        clean=args.clean,
     )
 
 

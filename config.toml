@@ -144,7 +144,7 @@ setup_mem                    = "1G"
 setup_data_points_per_task   = 1
 setup_minutes_per_data_point = 2
 
-# Analysis: one core per task, a few data points per task
-analysis_data_points_per_task   = 5
+# Analysis: isolate data points so JAX/PyMBAR memory is reclaimed between tasks.
+analysis_data_points_per_task   = 1
 analysis_minutes_per_data_point = 2
-analysis_mem                    = "1G"
+analysis_mem                    = "4G"
