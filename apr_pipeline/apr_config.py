@@ -58,17 +58,66 @@ def _validate(cfg):
         isinstance(wall["enabled"], bool),
         "apr.restraints.walls.distance.enabled must be true or false",
     )
-    for key in ("r1", "r2", "r3", "r4"):
-        value = wall[key]
+    need(
+        wall["mode"] in ("manual", "rim"),
+        "apr.restraints.walls.distance.mode must be 'manual' or 'rim'",
+    )
+    if wall["mode"] == "rim":
+        rim_groups = wall.get("rim_atom_groups")
         need(
-            isinstance(value, (int, float))
-            and not isinstance(value, bool)
-            and math.isfinite(value),
-            f"apr.restraints.walls.distance.{key} must be a finite number",
+            isinstance(rim_groups, list)
+            and len(rim_groups) == 2
+            and all(isinstance(group, list) and len(group) == 7 for group in rim_groups),
+            "apr.restraints.walls.distance.rim_atom_groups must contain two groups of 7 host atom numbers in rim mode",
         )
-    need(wall["r1"] < wall["r2"], "apr.restraints.walls.distance.r1 must be < r2")
-    need(wall["r2"] <= wall["r3"], "apr.restraints.walls.distance.r2 must be <= r3")
-    need(wall["r3"] < wall["r4"], "apr.restraints.walls.distance.r3 must be < r4")
+        rim_atom_numbers = [number for group in rim_groups for number in group]
+        need(
+            all(isinstance(number, int) and not isinstance(number, bool) and number > 0
+                for number in rim_atom_numbers)
+            and len(set(rim_atom_numbers)) == len(rim_atom_numbers),
+            "apr.restraints.walls.distance.rim_atom_groups must contain unique positive integers",
+        )
+
+    bounds = [wall[key] for key in ("r1", "r2", "r3", "r4")]
+    need(
+        all(isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            for value in bounds),
+        "apr.restraints.walls.distance.r1-r4 must be finite numbers",
+    )
+    if wall["mode"] == "manual":
+        need(
+            bounds[0] < bounds[1] < bounds[2] < bounds[3],
+            "manual apr.restraints.walls.distance bounds must satisfy r1 < r2 < r3 < r4",
+        )
+    for key in ("rk2", "rk3"):
+        need(
+            isinstance(wall[key], (int, float))
+            and not isinstance(wall[key], bool)
+            and math.isfinite(wall[key])
+            and wall[key] > 0,
+            f"apr.restraints.walls.distance.{key} must be a finite positive number",
+        )
+    if wall["mode"] == "rim":
+        rim_offset = wall.get("rim_offset")
+        need(
+            isinstance(rim_offset, (int, float))
+            and not isinstance(rim_offset, bool)
+            and math.isfinite(rim_offset)
+            and rim_offset >= 0,
+            "apr.restraints.walls.distance.rim_offset must be a finite "
+            "nonnegative distance in rim mode",
+        )
+        parabolic_width = wall.get("parabolic_width")
+        need(
+            isinstance(parabolic_width, (int, float))
+            and not isinstance(parabolic_width, bool)
+            and math.isfinite(parabolic_width)
+            and parabolic_width > 0,
+            "apr.restraints.walls.distance.parabolic_width must be a finite "
+            "positive distance in rim mode",
+        )
 
     s = cfg["slurm"]
     need(s["max_array_size"] <= 1001, "slurm.max_array_size is above the cluster maximum (1001)")
@@ -110,10 +159,16 @@ def load_config(path=CONFIG_PATH):
     walls = cfg["apr"]["restraints"].setdefault("walls", {})
     distance_wall = walls.setdefault("distance", {})
     distance_wall.setdefault("enabled", False)
+    distance_wall.setdefault("mode", "manual")
     distance_wall.setdefault("r1", 0.0)
     distance_wall.setdefault("r2", 1.0)
-    distance_wall.setdefault("r3", 11.0)
-    distance_wall.setdefault("r4", 12.0)
+    distance_wall.setdefault("r3", 12.0)
+    distance_wall.setdefault("r4", 13.0)
+    distance_wall.setdefault("rk2", 100.0)
+    distance_wall.setdefault("rk3", 100.0)
+    if distance_wall["mode"] == "rim":
+        distance_wall.setdefault("rim_offset", 1.0)
+        distance_wall.setdefault("parabolic_width", 1.0)
     base = Path(path).resolve().parent                 # relative paths start here
     for key, value in cfg["directories"].items():
         cfg["directories"][key] = str((base / value).resolve())

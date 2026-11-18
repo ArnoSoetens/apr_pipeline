@@ -109,11 +109,20 @@ Not in the config on purpose: the `#SBATCH` lines (sbatch reads them before anyt
 the BCD-specific per-glucose restraint atom numbers in `apr_setup.set_restraints`,
 and the output file names inside `run.sh` (production.nc, ...).
 
-An optional attach-phase distance wall is configured under
-`[apr.restraints.walls.distance]`. Set `enabled = true` to turn it on and
-configure `r1`–`r4` in Angstroms. `r2`–`r3` is the flat, zero-energy region;
-the regions outside it are parabolic between the bounds and linear beyond
-`r1`/`r4`. It is disabled by default.
+The optional attach-phase distance wall is configured under
+`[apr.restraints.walls.distance]` and is disabled by default. It is one
+DM1-G1 flat-well restraint: `r2` and `r3` set the zero-energy interval, while
+`r1`/`r4` set the parabolic-to-linear transition points and `rk2`/`rk3` set the
+two force constants. With `mode = "manual"`, the configured `r1`–`r4` values
+are used directly. For example, `r2 = 1` and `r3 = 12` mean the flat region
+spans DM1-G1 distances from 1 to 12 Å. Manual mode does not inspect the host
+or require rim atom numbers. With `mode = "rim"`, setup fits planes to the
+seven configured oxygen atoms on each host rim, verifies that they align with
+the APR axis and bracket G1/G2, then uses the DM1-to-rim distances for `r2`
+and `r3`; `parabolic_width` sets the shoulder widths (`r1` is clamped to zero
+if needed). `rim_offset` expands the flat region: setting it to 3 Å makes `r2`
+3 Å smaller and `r3` 3 Å larger than their fitted rim distances. Rim atom
+groups must be supplied in the config when rim mode is selected.
 
 ## Setup: serial or as an array
 
@@ -272,10 +281,12 @@ Because trajectory frames are saved at a fixed interval, the sample fraction
 is also the sampled-time fraction. Non-finite samples cause an explicit error
 instead of being silently discarded.
 
-When a two-atom distance wall is present in the attachment windows'
-`disang.rest` files, `results.json` also contains `distance_wall`. The analysis
-reconstructs the restraint potential from each sampled wall distance and its
-Amber `r1`–`r4` and `rk2`/`rk3` parameters. In the parabolic regions the Amber
+When distance walls are present in the attachment windows' `disang.rest`
+files, `results.json` also contains `distance_wall`. For the configured
+single-wall setup, it contains that wall's summary directly; for multiple
+walls, it contains a `walls` list with one summary per restraint pair. The
+analysis reconstructs the restraint potential from each sampled wall distance and its Amber `r1`–`r4` and
+`rk2`/`rk3` parameters. In the parabolic regions the Amber
 energy is `rk * (distance - boundary)²` (without a one-half factor); beyond
 `r1`/`r4`, the potential continues linearly with the boundary slope. The output
 reports the mean and maximum instantaneous potential energy, the fraction of

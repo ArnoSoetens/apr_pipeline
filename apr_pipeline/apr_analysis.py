@@ -2,6 +2,7 @@
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import matplotlib
@@ -9,7 +10,7 @@ matplotlib.use("Agg")                 # must come before importing pyplot
 import matplotlib.pyplot as plt
 
 from paprika import analysis
-from paprika.io import load_restraints
+from paprika.io import load_restraints, load_trajectory, read_restraint_data
 from paprika.restraints import create_window_list
 
 from apr_config import CFG, get_attach_fractions, get_pull_distances, get_method
@@ -103,8 +104,8 @@ def _fraction_outside_distance(samples, initial_distance, threshold):
     return float(np.count_nonzero(np.abs(samples - initial_distance) > threshold) / samples.size)
 
 
-def _read_distance_wall(disang_path):
-    """Read the unique two-atom, four-bound distance wall from an Amber restraint file."""
+def _read_distance_walls(disang_path):
+    """Read all two-atom, four-bound distance walls from an Amber restraint file."""
     text = Path(disang_path).read_text()
     candidates = []
     for block in re.findall(r"&rst\b(.*?)&end", text, flags=re.IGNORECASE | re.DOTALL):
@@ -133,7 +134,7 @@ def _read_distance_wall(disang_path):
             continue
 
         if (
-            parameters["r1"] < parameters["r2"] < parameters["r3"] < parameters["r4"]
+            parameters["r1"] <= parameters["r2"] < parameters["r3"] < parameters["r4"]
             and parameters["rk2"] > 0
             and parameters["rk3"] > 0
         ):
@@ -143,9 +144,7 @@ def _read_distance_wall(disang_path):
                 )
             candidates.append({"atom_indices": atom_indices, **parameters})
 
-    if len(candidates) > 1:
-        raise ValueError(f"Multiple two-atom distance walls found in {disang_path}")
-    return candidates[0] if candidates else None
+    return candidates
 
 
 def _amber_distance_wall_energy(distances, wall):
@@ -176,7 +175,7 @@ def _amber_distance_wall_energy(distances, wall):
     return energy
 
 
-def _distance_wall_summary(windows_dir, simulation_data, window_order):
+def _distance_wall_summary(windows_dir, simulation_data, window_order, topology=None):
     """Summarize restraint energy and signed endpoint work for independent windows."""
     if len(simulation_data["attach"]) != len(window_order):
         raise ValueError(
@@ -190,69 +189,101 @@ def _distance_wall_summary(windows_dir, simulation_data, window_order):
     ]
     if not attachment_windows:
         return None
-    walls = [
-        _read_distance_wall(Path(windows_dir) / window / "disang.rest")
+    walls_by_window = [
+        _read_distance_walls(Path(windows_dir) / window / "disang.rest")
         for _, window in attachment_windows
     ]
-    if not any(wall is not None for wall in walls):
+    if not any(walls_by_window):
         return None
-    if any(wall is None for wall in walls):
-        raise ValueError("Distance wall is present in only some attachment windows")
+    if any(len(walls) != len(walls_by_window[0]) for walls in walls_by_window):
+        raise ValueError("Distance-wall count differs between attachment windows")
 
-    reference = walls[0]
-    for (_, window), wall in zip(attachment_windows[1:], walls[1:]):
-        if wall["atom_indices"] != reference["atom_indices"] or any(
-            not np.isclose(wall[key], reference[key], rtol=0.0, atol=1e-5)
-            for key in ("r1", "r2", "r3", "r4", "rk2", "rk3")
-        ):
-            raise ValueError(f"Distance-wall parameters differ in window {window}")
+    reference_walls = walls_by_window[0]
+    for (_, window), walls in zip(attachment_windows[1:], walls_by_window[1:]):
+        for wall_index, (reference, wall) in enumerate(zip(reference_walls, walls)):
+            if wall["atom_indices"] != reference["atom_indices"] or any(
+                not np.isclose(wall[key], reference[key], rtol=0.0, atol=1e-5)
+                for key in ("r1", "r2", "r3", "r4", "rk2", "rk3")
+            ):
+                raise ValueError(
+                    f"Distance-wall parameters differ in window {window} "
+                    f"for wall {wall_index + 1}"
+                )
 
-    per_window = {}
-    all_energies = []
-    all_active = []
-    total_frames = 0
-    for index, window in attachment_windows:
-        distances = np.asarray(_mag(simulation_data["attach"][index][0]), dtype=float).reshape(-1)
-        if distances.size == 0 or not np.all(np.isfinite(distances)):
-            raise ValueError(f"Invalid distance-wall samples in window {window}")
-        energies = _amber_distance_wall_energy(distances, reference)
-        active = (distances < reference["r2"]) | (distances > reference["r3"])
-        per_window[str(window)] = {
-            "frame_count": int(distances.size),
-            "mean_potential_energy_kcal_per_mol": float(np.mean(energies)),
-            "maximum_potential_energy_kcal_per_mol": float(np.max(energies)),
-            "active_frame_percent": float(100.0 * np.mean(active)),
-            "net_work_by_wall_start_to_end_kcal_per_mol": float(
-                energies[0] - energies[-1]
-            ),
-        }
-        all_energies.append(energies)
-        all_active.append(active)
-        total_frames += distances.size
+    summaries = []
+    for wall_index, reference in enumerate(reference_walls):
+        per_window = {}
+        all_energies = []
+        all_active = []
+        total_frames = 0
+        for simulation_index, window in attachment_windows:
+            if wall_index == 0:
+                # The first generated wall is DM1-G1, the APR distance restraint.
+                distances = _mag(simulation_data["attach"][simulation_index][0])
+            else:
+                if topology is None:
+                    raise ValueError(
+                        "A topology is required to analyze additional distance walls"
+                    )
+                trajectory = load_trajectory(
+                    str(Path(windows_dir) / window), TRAJECTORY, topology
+                )
+                atom1, atom2 = reference["atom_indices"]
+                distance_restraint = SimpleNamespace(
+                    mask1=f"@{atom1}",
+                    mask2=f"@{atom2}",
+                    mask3=None,
+                    mask4=None,
+                )
+                distances = _mag(read_restraint_data(trajectory, distance_restraint))
 
-    pooled_energies = np.concatenate(all_energies)
-    pooled_active = np.concatenate(all_active)
-    return {
-        "parameters": {
-            "amber_atom_indices_1based": reference["atom_indices"],
-            "r1_angstrom": reference["r1"],
-            "r2_angstrom": reference["r2"],
-            "r3_angstrom": reference["r3"],
-            "r4_angstrom": reference["r4"],
-            "rk2_kcal_per_mol_angstrom2": reference["rk2"],
-            "rk3_kcal_per_mol_angstrom2": reference["rk3"],
-        },
-        "frame_count": int(total_frames),
-        "mean_potential_energy_kcal_per_mol": float(np.mean(pooled_energies)),
-        "maximum_potential_energy_kcal_per_mol": float(np.max(pooled_energies)),
-        "active_frame_percent": float(100.0 * np.mean(pooled_active)),
-        "per_window": per_window,
-        "work_definition": (
-            "For each independent window, net work done by the static wall from "
-            "the first to last saved frame is U(first) - U(last). Per-window "
-            "values are not summed because windows are independent trajectories."
-        ),
-    }
+            distances = np.asarray(distances, dtype=float).reshape(-1)
+            if distances.size == 0 or not np.all(np.isfinite(distances)):
+                raise ValueError(f"Invalid distance-wall samples in window {window}")
+            energies = _amber_distance_wall_energy(distances, reference)
+            active = energies > 0.0
+            per_window[str(window)] = {
+                "frame_count": int(distances.size),
+                "mean_potential_energy_kcal_per_mol": float(np.mean(energies)),
+                "maximum_potential_energy_kcal_per_mol": float(np.max(energies)),
+                "active_frame_percent": float(100.0 * np.mean(active)),
+                "net_work_by_wall_start_to_end_kcal_per_mol": float(
+                    energies[0] - energies[-1]
+                ),
+            }
+            all_energies.append(energies)
+            all_active.append(active)
+            total_frames += distances.size
+
+        pooled_energies = np.concatenate(all_energies)
+        pooled_active = np.concatenate(all_active)
+        summaries.append({
+            "parameters": {
+                "amber_atom_indices_1based": reference["atom_indices"],
+                "r1_angstrom": reference["r1"],
+                "r2_angstrom": reference["r2"],
+                "r3_angstrom": reference["r3"],
+                "r4_angstrom": reference["r4"],
+                "rk2_kcal_per_mol_angstrom2": reference["rk2"],
+                "rk3_kcal_per_mol_angstrom2": reference["rk3"],
+            },
+            "frame_count": int(total_frames),
+            "mean_potential_energy_kcal_per_mol": float(np.mean(pooled_energies)),
+            "maximum_potential_energy_kcal_per_mol": float(np.max(pooled_energies)),
+            "active_frame_percent": float(100.0 * np.mean(pooled_active)),
+            "per_window": per_window,
+        })
+
+    if len(summaries) == 1:
+        result = summaries[0]
+    else:
+        result = {"walls": summaries}
+    result["work_definition"] = (
+        "For each independent window, net work done by the static wall from "
+        "the first to last saved frame is U(first) - U(last). Per-window "
+        "values are not summed because windows are independent trajectories."
+    )
+    return result
 
 
 def _phase_details(res, phase):
@@ -308,7 +339,8 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     guest_restraints = load_restraints(f"{windows_dir}/restraints.json")
 
     fe = analysis.fe_calc()
-    fe.topology = f"{complex_prefix}-dum.prmtop"
+    topology = f"{complex_prefix}-dum.prmtop"
+    fe.topology = topology
     fe.trajectory = TRAJECTORY
     fe.path = str(windows_dir)
     fe.restraint_list = guest_restraints
@@ -358,6 +390,7 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
         windows_dir,
         sim_data,
         attach_window_names,
+        topology=topology,
     )
 
     if plot_path:

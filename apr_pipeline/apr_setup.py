@@ -76,9 +76,34 @@ def build_system( data_dir_host, data_dir_guest, host_prefix=HOST, guest_prefix=
 def guest_masks(b1_idx, b2_idx, guest_prefix=GUEST):
     s = pmd.load_file("complex/vac.prmtop", "complex/vac.rst7", structure=True)
     guest_atoms = [a for a in s.atoms if a.residue.name == guest_prefix]
+    if not (0 <= b1_idx < len(guest_atoms) and 0 <= b2_idx < len(guest_atoms)):
+        raise IndexError(
+            f"backbone atom indices ({b1_idx}, {b2_idx}) exceed the "
+            f"{len(guest_atoms)} atoms in residue {guest_prefix}"
+        )
+    if guest_atoms[b2_idx].xz < guest_atoms[b1_idx].xz:
+        b1_idx, b2_idx = b2_idx, b1_idx
+        print("Reversed restraint atom order to match the guest's +z orientation.")
     G1 = f":{guest_prefix}@{guest_atoms[b1_idx].idx + 1}"
     G2 = f":{guest_prefix}@{guest_atoms[b2_idx].idx + 1}"
     return G1, G2
+
+
+def validate_dummy_anchor_geometry(structure, G1, G2):
+    dm1_atoms = [atom for atom in structure.atoms if atom.residue.name == "DM1"]
+    if len(dm1_atoms) != 1:
+        raise ValueError(f"expected exactly one DM1 atom, found {len(dm1_atoms)}")
+
+    g1 = structure[G1].coordinates[0]
+    g2 = structure[G2].coordinates[0]
+    dm1 = np.array([dm1_atoms[0].xx, dm1_atoms[0].xy, dm1_atoms[0].xz])
+    g1_distance = float(np.linalg.norm(g1 - dm1))
+    g2_distance = float(np.linalg.norm(g2 - dm1))
+    if g1_distance >= g2_distance:
+        raise ValueError(
+            "DM1 is not closer to G1 than G2 after alignment "
+            f"(G1: {g1_distance:.3f} A, G2: {g2_distance:.3f} A)"
+        )
 
 
 def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix=HOST, guest_prefix=GUEST, radii_set=RADII):
@@ -91,6 +116,9 @@ def add_dummy(G1, G2, data_dir_host, data_dir_guest, host_prefix=HOST, guest_pre
     structure = dummy.add_dummy(structure, residue_name="DM1", z=DUMMY_Z[0])
     structure = dummy.add_dummy(structure, residue_name="DM2", z=DUMMY_Z[1])
     structure = dummy.add_dummy(structure, residue_name="DM3", z=DUMMY_Z[2], y=DUMMY3_Y)
+    validate_dummy_anchor_geometry(structure, G1, G2)
+    structure.save("complex/aligned.prmtop", overwrite=True)
+    structure.save("complex/aligned.rst7", overwrite=True)
     structure.save("complex/aligned_with_dummy.prmtop", overwrite=True)
     structure.save("complex/aligned_with_dummy.rst7", overwrite=True)
     structure.save("complex/aligned_with_dummy.pdb", overwrite=True)
@@ -133,17 +161,53 @@ def window_setup():
     return windows, attach_fractions
 
 
-def create_wall_restraint(structure, D1, G1, attach_windows):
-    wall_config = WALLS["distance"]
-    if not wall_config["enabled"]:
-        return None
+def _rim_plane_distance_from_dm1(structure, atom_numbers, dm1_position, host_prefix):
+    host_atoms = [atom for atom in structure.atoms if atom.residue.name == host_prefix]
+    if any(number < 1 or number > len(host_atoms) for number in atom_numbers):
+        raise ValueError(
+            f"rim atom numbers {atom_numbers} must be within 1-{len(host_atoms)} "
+            f"for host residue {host_prefix}"
+        )
 
+    atoms = [host_atoms[number - 1] for number in atom_numbers]
+    if any(atom.atomic_number != 8 for atom in atoms):
+        raise ValueError(
+            f"configured rim atoms {atom_numbers} must all be oxygen atoms "
+            f"in host residue {host_prefix}"
+        )
+
+    coordinates = np.array([[atom.xx, atom.xy, atom.xz] for atom in atoms])
+    center = coordinates.mean(axis=0)
+    _, singular_values, right_vectors = np.linalg.svd(coordinates - center)
+    if len(singular_values) < 2 or singular_values[1] < 1e-6:
+        raise ValueError(f"configured rim atoms {atom_numbers} do not define a plane")
+
+    normal = right_vectors[-1]
+    axis = np.array([0.0, 0.0, 1.0])
+    if np.dot(normal, axis) < 0:
+        normal = -normal
+    alignment = float(np.dot(normal, axis))
+    rms_deviation = float(np.sqrt(np.mean(((coordinates - center) @ normal) ** 2)))
+    if alignment < np.cos(np.deg2rad(15.0)) or rms_deviation > 0.25:
+        raise ValueError(
+            f"configured rim atoms {atom_numbers} do not form a rim plane "
+            f"perpendicular to the APR axis (normal alignment {alignment:.3f}, "
+            f"plane RMS {rms_deviation:.3f} A)"
+        )
+
+    axial_normal = float(np.dot(normal, axis))
+    return float(np.dot(normal, center - dm1_position) / axial_normal)
+
+
+def _create_distance_wall(
+    structure, D1, guest_mask, attach_windows, bounds, rk2, rk3
+):
     wall = restraints.DAT_restraint()
     wall.auto_apr = False
     wall.amber_index = True
     wall.topology = structure
     wall.mask1 = D1
-    wall.mask2 = G1
+    wall.mask2 = guest_mask
 
     wall.attach["fc_initial"] = 100.0
     wall.attach["fc_final"] = 100.0
@@ -151,16 +215,92 @@ def create_wall_restraint(structure, D1, G1, attach_windows):
     wall.attach["num_windows"] = attach_windows
     wall.custom_restraint_values.update(
         {
-            "r1": wall_config["r1"],
-            "r2": wall_config["r2"],
-            "r3": wall_config["r3"],
-            "r4": wall_config["r4"],
-            "rk2": 100.0,
-            "rk3": 100.0,
+            "r1": bounds[0],
+            "r2": bounds[1],
+            "r3": bounds[2],
+            "r4": bounds[3],
+            "rk2": rk2,
+            "rk3": rk3,
         }
     )
     wall.initialize()
     return wall
+
+
+def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HOST):
+    wall_config = WALLS["distance"]
+    if not wall_config["enabled"]:
+        return []
+
+    dm1_position = structure[D1].coordinates[0]
+    g1_position = structure[G1].coordinates[0]
+    g2_position = structure[G2].coordinates[0]
+    axis = np.array([0.0, 0.0, 1.0])
+    g1_distance = float(np.dot(g1_position - dm1_position, axis))
+    g2_distance = float(np.dot(g2_position - dm1_position, axis))
+    if not 0 < g1_distance < g2_distance:
+        raise ValueError(
+            f"restraint atoms must lie in +z order from DM1 "
+            f"(G1={g1_distance:.3f} A, G2={g2_distance:.3f} A)"
+        )
+
+    if wall_config["mode"] == "rim":
+        measured_rim_distances = sorted(
+            _rim_plane_distance_from_dm1(
+                structure, atom_group, dm1_position, host_prefix
+            )
+            for atom_group in wall_config["rim_atom_groups"]
+        )
+        near_rim, far_rim = measured_rim_distances
+        if not near_rim < g1_distance < g2_distance < far_rim:
+            raise ValueError(
+                "configured beta-CD rim planes do not bracket the restraint atoms "
+                "from DM1 toward +z "
+                f"(near rim={near_rim:.3f} A, G1={g1_distance:.3f} A, "
+                f"G2={g2_distance:.3f} A, far rim={far_rim:.3f} A); "
+                "check apr.restraints.walls.distance.rim_atom_groups"
+            )
+
+    if wall_config["mode"] == "rim":
+        rim_offset = wall_config["rim_offset"]
+        parabolic_width = wall_config["parabolic_width"]
+        r2 = near_rim - rim_offset
+        if r2 <= 0:
+            raise ValueError(
+                f"rim_offset {rim_offset:.3f} A must be smaller than the "
+                f"DM1-to-near-rim distance {near_rim:.3f} A"
+            )
+        r3 = far_rim + rim_offset
+        bounds = (
+            max(0.0, r2 - parabolic_width),
+            r2,
+            r3,
+            r3 + parabolic_width,
+        )
+    else:
+        bounds = tuple(wall_config[key] for key in ("r1", "r2", "r3", "r4"))
+    if not bounds[0] < bounds[1] < bounds[2] < bounds[3]:
+        raise ValueError(
+            "wall bounds must satisfy r1 < r2 < r3 < r4 "
+            f"(received {bounds})"
+        )
+
+    print(
+        "DM1-G1 flat-well wall: "
+        f"r1={bounds[0]:.3f}, r2={bounds[1]:.3f}, "
+        f"r3={bounds[2]:.3f}, r4={bounds[3]:.3f} A."
+    )
+    return [
+        _create_distance_wall(
+            structure,
+            D1,
+            G1,
+            attach_windows,
+            bounds,
+            wall_config["rk2"],
+            wall_config["rk3"],
+        )
+    ]
 
 
 def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
@@ -236,7 +376,9 @@ def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
         r.initialize()
         guest_restraints.append(r)
 
-    wall_restraint = create_wall_restraint(structure, D1, G1, windows[0])
+    wall_restraints = create_wall_restraints(
+        structure, D1, G1, G2, windows[0], host_prefix
+    )
 
     # Create directories and write disang.rest for each window.
     window_list = create_window_list(guest_restraints)
@@ -252,7 +394,7 @@ def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
                 if line is not None:
                     f.write(line)
             if window[0] == "a":
-                if wall_restraint is not None:
+                for wall_restraint in wall_restraints:
                     line = amber_restraint_line(wall_restraint, window)
                     if line is not None:
                         f.write(line)
