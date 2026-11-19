@@ -1,18 +1,14 @@
-__pycache__
-**/*.slurm
-*.slurm
-data_previous_runs/
-
-cat << 'EOF' > .gitignore
-# Data & Cache
+# Data & cache
 data/*
 !data/BCD.frcmod
 !data/BCD.mol2
 !data/BCD.pdb
+data_previous_runs/
+previous_data/
 __pycache__/
 *.pyc
 
-# HPC & Slurm logs
+# HPC & Slurm logs (scripts/job_array.slurm is tracked anyway)
 *.slurm
 *.out
 *.err
@@ -23,11 +19,7 @@ __pycache__/
 env/
 .vscode/
 .DS_Store
-EOF
 
+# Other
 *.mjs
 other/
-
-tests/
-
-previous_data/
