@@ -145,6 +145,21 @@ expand_datapoint_args() {
     done
 }
 
+# Print the complex PDB to load for a data point: prefer
+# <datapoint>/complex/aligned_with_dummy.pdb, fall back to <datapoint>/$COMPLEX_PREFIX.pdb.
+# Returns non-zero if neither exists (or is empty).
+find_complex_pdb() {
+    local dp_root="$DATA_DIR/$1"
+    local candidate
+    for candidate in "$dp_root/complex/aligned_with_dummy.pdb" "$dp_root/$COMPLEX_PREFIX.pdb"; do
+        if [[ -s "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 run_pdb_mode() {
     local mode="$1"
     local datapoint pdb_path report_path guest_path guest_atom_index
@@ -155,9 +170,13 @@ run_pdb_mode() {
         local -a selected_datapoints=("${EXPANDED_DATAPOINTS[@]}")
     elif [[ "$mode" == "complex" ]]; then
         local -a selected_datapoints=()
-        while IFS= read -r -d '' pdb_path; do
-            selected_datapoints+=("$(basename "$(dirname "$pdb_path")")")
-        done < <(find "$DATA_DIR" -mindepth 2 -maxdepth 2 -type f -name "$COMPLEX_PREFIX.pdb" -print0 | sort -z)
+        local dp_dir
+        for dp_dir in "$DATA_DIR"/*/; do
+            [[ -d "$dp_dir" ]] || continue
+            if find_complex_pdb "$(basename "$dp_dir")" > /dev/null; then
+                selected_datapoints+=("$(basename "$dp_dir")")
+            fi
+        done
     else
         local -a selected_datapoints=()
         while IFS= read -r -d '' report_path; do
@@ -167,11 +186,11 @@ run_pdb_mode() {
 
     if [[ "$mode" == "complex" ]]; then
         for datapoint in "${selected_datapoints[@]}"; do
-            pdb_path="$DATA_DIR/$datapoint/$COMPLEX_PREFIX.pdb"
-            if [[ ! -s "$pdb_path" ]]; then
-                echo "Warning: skipping '$datapoint' -- complex PDB not found at $pdb_path" >&2
+            if ! pdb_path="$(find_complex_pdb "$datapoint")"; then
+                echo "Warning: skipping '$datapoint' -- no complex/aligned_with_dummy.pdb or $COMPLEX_PREFIX.pdb in $DATA_DIR/$datapoint" >&2
                 continue
             fi
+            log "[$datapoint] loading $pdb_path"
             valid_names+=("$datapoint")
             valid_pdbs+=("$pdb_path")
         done

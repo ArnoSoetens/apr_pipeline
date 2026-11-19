@@ -252,17 +252,21 @@ def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HO
             for atom_group in wall_config["rim_atom_groups"]
         )
         near_rim, far_rim = measured_rim_distances
-        if not near_rim < g1_distance < g2_distance < far_rim:
+        rim_offset = wall_config["rim_offset"]
+        lower_bound = near_rim - rim_offset
+        upper_bound = far_rim + rim_offset
+        if not lower_bound < g1_distance < g2_distance < upper_bound:
             raise ValueError(
                 "configured beta-CD rim planes do not bracket the restraint atoms "
                 "from DM1 toward +z "
                 f"(near rim={near_rim:.3f} A, G1={g1_distance:.3f} A, "
-                f"G2={g2_distance:.3f} A, far rim={far_rim:.3f} A); "
+                f"G2={g2_distance:.3f} A, far rim={far_rim:.3f} A, "
+                f"rim_offset={rim_offset:.3f} A; allowed range "
+                f"{lower_bound:.3f}-{upper_bound:.3f} A); "
                 "check apr.restraints.walls.distance.rim_atom_groups"
             )
 
     if wall_config["mode"] == "rim":
-        rim_offset = wall_config["rim_offset"]
         parabolic_width = wall_config["parabolic_width"]
         r2 = near_rim - rim_offset
         if r2 <= 0:
