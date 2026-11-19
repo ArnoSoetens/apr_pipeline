@@ -12,6 +12,7 @@ from datapoints import (
     GUEST_MOL2,
     GUEST_PDB,
     TOPOLOGY,
+    TRAJECTORY,
     WINDOWS,
     all_data_points,
     next_stage,
@@ -82,6 +83,13 @@ class SetupStageTests(unittest.TestCase):
     def test_built_windows_are_done(self):
         dp = self.make("built", GUEST_PDB, COMPLEX_PDB, GUEST_MOL2, GUEST_FRCMOD)
         self.build_windows(dp)
+        self.assertEqual(next_stage(dp), DONE)
+
+    def test_any_simulation_output_is_done(self):
+        # a cleaned-up point: trajectories in a few windows, topologies and parameters gone
+        dp = self.make("cleaned", GUEST_PDB, COMPLEX_PDB)
+        (dp / "windows" / "a003").mkdir(parents=True)
+        (dp / "windows" / "a003" / TRAJECTORY).write_text("x\n")
         self.assertEqual(next_stage(dp), DONE)
 
     def test_empty_folder_has_no_stage(self):

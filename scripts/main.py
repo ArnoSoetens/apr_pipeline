@@ -6,6 +6,8 @@
     python main.py iso_00001 ...    set up just these data points (this is what the slurm array tasks do)
 
 A data point that fails gets a setup_failed.txt with the reason; one that succeeds loses it.
+A data point with simulation output (any windows/*/production.nc) is always skipped, even with
+--force or by name: setup would overwrite its windows.
 """
 import argparse
 import os
@@ -43,6 +45,7 @@ from datapoints import (
     SETUP_STATES,
     clear_failed,
     ensure_data_directories,
+    has_simulation_output,
     mark_failed,
     scan,
 )
@@ -75,6 +78,11 @@ for i, name in enumerate(names, 1):
         os.path.join(data_point_dir, f"{GUEST}.frcmod"),
         os.path.join(data_point_dir, f'{CFG["naming"]["complex_prefix"]}.pdb'),
     )
+    if has_simulation_output(data_point_dir):
+        print(name, "SKIPPED: has simulation output (windows/*/"
+              f'{CFG["analysis"]["trajectory"]}); setup never touches it')
+        n_skipped += 1
+        continue
     use_prepared_files = all(os.path.isfile(path) for path in prepared_files)
     has_smiles = os.path.isfile(smi_file)
     if not has_smiles and not use_prepared_files:

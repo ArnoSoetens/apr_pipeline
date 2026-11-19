@@ -57,13 +57,26 @@ def placement_inputs(dp):
     return candidates
 
 
+def has_simulation_output(dp):
+    """Whether any window has a production trajectory (windows/*/production.nc).
+
+    Such a data point has simulated data, so setup must never touch it again: not with
+    --force, --from or by name. Cleaned-up points keep only a few trajectories (e.g.
+    a000-a004), so one trajectory in one window is enough.
+    """
+    return any((Path(dp) / "windows").glob(f"*/{TRAJECTORY}"))
+
+
 def next_stage(dp):
     """The first setup stage this data point still needs: one of STAGES, DONE, or None.
 
     Decided only by which files exist (existing outputs are trusted), latest stage first.
-    None means the folder has no input any stage recognizes.
+    A data point with simulation output is always DONE. None means the folder has no
+    input any stage recognizes.
     """
     dp = Path(dp)
+    if has_simulation_output(dp):
+        return DONE
     has = lambda name: (dp / name).is_file()
     if has(GUEST_PDB) and has(COMPLEX_PDB):
         if not (has(GUEST_MOL2) and has(GUEST_FRCMOD)):
