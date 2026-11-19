@@ -4,7 +4,7 @@ Setup stages (next_stage() checks the files in the data point folder, latest sta
     structure    <name>.smi                          -> raw guest PDB
     placement    any guest PDB (see placement_inputs) -> <guest>.pdb + <complex>.pdb
     parametrize  <guest>.pdb + <complex>.pdb          -> <guest>.mol2 + <guest>.frcmod
-    apr_setup    all four guest/complex files         -> windows/*/<complex>-dum.prmtop
+    apr_setup    all four guest/complex files         -> windows/*/<complex>-dum.prmtop, complex/
     done         windows are built (scan() then tells simulation/analysis state)
 
 States (checked on the files in the data point folder):
@@ -15,6 +15,8 @@ States (checked on the files in the data point folder):
     needs_analysis    all window production trajectories exist; no results.json yet
     analyzed          results.json exists
 """
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -83,6 +85,29 @@ def all_data_points(only=None, data_dir=DATA):
                   if p.is_dir() and (not only or p.name in only) and next_stage(p) is not None)
 
 
+def ensure_data_directories(data_dir=DATA, smiles_list=None):
+    """Return the data points; create them from the SMILES list only when there are none yet.
+
+    The SMILES list is only needed (and only read) when the data directory has no folder
+    that any setup stage recognizes.
+    """
+    dps = all_data_points(data_dir=data_dir)
+    if dps:
+        return dps
+    smiles_list = Path(smiles_list or CFG["directories"]["smiles_list"])
+    if not smiles_list.is_file():
+        raise FileNotFoundError(
+            f"no data point folders in {data_dir}, and no SMILES list to create them from "
+            f"({smiles_list}, directories.smiles_list in config.toml)")
+    print(f"[directories] creating data point folders from {smiles_list}", flush=True)
+    subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("create_data_directories.py")),
+         str(smiles_list), str(data_dir)],
+        check=True,
+    )
+    return all_data_points(data_dir=data_dir)
+
+
 def scan(dp):
     """(state, windows still to simulate)"""
     dp = Path(dp)
@@ -101,46 +126,6 @@ def scan(dp):
     if left:
         return "needs_simulation", left
     return "needs_analysis", []
-
-
-def data_points(only=None):
-    """Folders in the data directory that have a .smi file, sorted."""
-    dps = sorted(p for p in DATA.iterdir() if p.is_dir() and (p / f"{p.name}.smi").exists())
-    if only:
-        dps = [p for p in dps if p.name in only]
-    return dps
-
-
-def prepared_data_points(only=None, data_dir=DATA):
-    """Folders with all guest, parameter, and complex files needed for APR setup."""
-    data_dir = Path(data_dir)
-    required_files = (
-        f'{CFG["naming"]["guest_prefix"]}.pdb',
-        f'{CFG["naming"]["guest_prefix"]}.mol2',
-        f'{CFG["naming"]["guest_prefix"]}.frcmod',
-        f'{CFG["naming"]["complex_prefix"]}.pdb',
-    )
-    dps = sorted(
-        path for path in data_dir.iterdir()
-        if path.is_dir() and all((path / filename).is_file() for filename in required_files)
-    )
-    if only:
-        dps = [path for path in dps if path.name in only]
-    return dps
-
-
-def setup_data_points(only=None, data_dir=DATA):
-    """Data points with SMILES input or complete prepared APR setup inputs."""
-    data_dir = Path(data_dir)
-    if not data_dir.is_dir():
-        return []
-    dps = {
-        path.name for path in data_dir.iterdir()
-        if path.is_dir() and (path / f"{path.name}.smi").is_file()
-        and (only is None or path.name in only)
-    }
-    dps.update(path.name for path in prepared_data_points(only, data_dir))
-    return [data_dir / name for name in sorted(dps)]
 
 
 def has_complete_run(dp):

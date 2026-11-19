@@ -52,36 +52,14 @@ from datapoints import (
     DATA,
     FAILED_FILE,
     WINDOWS,
-    data_points,
+    all_data_points,
+    ensure_data_directories,
     failure_reason,
-    prepared_data_points,
     scan,
-    setup_data_points,
 )
 
 LOGS = Path(CFG["directories"]["logs"])
 SL = CFG["slurm"]
-
-
-def ensure_data_directories():
-    """Create folders only when no SMILES or fully prepared data points exist."""
-    if DATA.is_dir() and (data_points() or prepared_data_points(data_dir=DATA)):
-        return
-
-    pipeline_dir = Path(CFG["directories"]["pipeline"])
-    creator = pipeline_dir / "create_data_directories.py"
-    smiles_path = CFG["directories"]["smiles_list"]
-    print(f"[directories] creating data point folders from {smiles_path}")
-    subprocess.run(
-        [
-            sys.executable,
-            str(creator),
-            smiles_path,
-            str(DATA),
-        ],
-        cwd=pipeline_dir,
-        check=True,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -344,9 +322,12 @@ def main():
         ap.error("--batches must be at least 1")
 
     if args.command != "status":
-        ensure_data_directories()
+        try:
+            ensure_data_directories()
+        except FileNotFoundError as e:
+            sys.exit(f"submit_arrays.py: {e}")
 
-    dps = setup_data_points(args.only)
+    dps = all_data_points(args.only)
     if args.command == "status":
         show_status(dps)
         return

@@ -1,7 +1,7 @@
 """Set up data points: guest structure, placement in the host, parametrization, APR windows.
 
-    python main.py                  serial: create data point folders from the configured SMILES list, then set up
-                                    every data point whose windows are not complete
+    python main.py                  serial: set up every data point folder whose windows are not complete
+                                    (folders are created from the configured SMILES list only when there are none)
     python main.py --force          ... and redo the complete ones too
     python main.py iso_00001 ...    set up just these data points (this is what the slurm array tasks do)
 
@@ -9,7 +9,6 @@ A data point that fails gets a setup_failed.txt with the reason; one that succee
 """
 import argparse
 import os
-import subprocess
 import sys
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -43,30 +42,18 @@ from apr_setup import *
 from datapoints import (
     SETUP_STATES,
     clear_failed,
+    ensure_data_directories,
     mark_failed,
-    prepared_data_points,
     scan,
-    setup_data_points,
 )
 
 
 serial = not args.names
 if serial:
-    smiles_list = CFG["directories"]["smiles_list"]
-    if not prepared_data_points() and (
-        os.path.isfile(smiles_list) or not setup_data_points()
-    ):
-        subprocess.run(
-            [
-                sys.executable,
-                "create_data_directories.py",
-                smiles_list,
-                data_dir,
-            ],
-            cwd=pipeline_dir,
-            check=True,
-        )
-    names = [dp.name for dp in setup_data_points()]
+    try:
+        names = [dp.name for dp in ensure_data_directories()]
+    except FileNotFoundError as e:
+        sys.exit(f"main.py: {e}")
 else:
     names = args.names
 
