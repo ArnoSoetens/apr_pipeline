@@ -1,5 +1,12 @@
 """What state is each data point in? Shared by scripts/main.py and scripts/submit_arrays.py.
 
+Setup stages (next_stage() checks the files in the data point folder, latest stage first):
+    structure    <name>.smi                          -> raw guest PDB
+    placement    any guest PDB (see placement_inputs) -> <guest>.pdb + <complex>.pdb
+    parametrize  <guest>.pdb + <complex>.pdb          -> <guest>.mol2 + <guest>.frcmod
+    apr_setup    all four guest/complex files         -> windows/*/<complex>-dum.prmtop
+    done         windows are built (scan() then tells simulation/analysis state)
+
 States (checked on the files in the data point folder):
     no_windows        no windows/ folder yet (setup not run)
     setup_incomplete  windows/ exists but some window folder lacks its topology
@@ -22,6 +29,58 @@ SETUP_STATES = ("no_windows", "setup_incomplete", "setup_failed")     # setup ha
 # window folder names: a000 ... (attach) and p000 ... (pull)
 WINDOWS = ([f"a{i:03d}" for i in range(len(get_attach_fractions())-1)] # the last attach window is the first pull window
            + [f"p{i:03d}" for i in range(len(get_pull_distances()))])
+
+# --- setup stages -----------------------------------------------------------
+GUEST_PDB = f'{CFG["naming"]["guest_prefix"]}.pdb'
+GUEST_MOL2 = f'{CFG["naming"]["guest_prefix"]}.mol2'
+GUEST_FRCMOD = f'{CFG["naming"]["guest_prefix"]}.frcmod'
+COMPLEX_PDB = f'{CFG["naming"]["complex_prefix"]}.pdb'
+NOT_GUEST_INPUT = {COMPLEX_PDB, "sqm.pdb"}   # PDBs in a data point folder that are never a guest input
+
+STAGES = ("structure", "placement", "parametrize", "apr_setup")
+DONE = "done"
+
+
+def placement_inputs(dp):
+    """Guest PDBs placement could read in this folder, sorted.
+
+    Any .pdb counts except the complex PDB and antechamber's sqm.pdb. The guest PDB
+    (<guest>.pdb) only counts when it is the only candidate: next to another PDB it is
+    the output of an earlier (e.g. failed) placement, not the input.
+    """
+    candidates = sorted(p for p in Path(dp).glob("*.pdb")
+                        if p.is_file() and p.name not in NOT_GUEST_INPUT)
+    if len(candidates) > 1:
+        candidates = [p for p in candidates if p.name != GUEST_PDB]
+    return candidates
+
+
+def next_stage(dp):
+    """The first setup stage this data point still needs: one of STAGES, DONE, or None.
+
+    Decided only by which files exist (existing outputs are trusted), latest stage first.
+    None means the folder has no input any stage recognizes.
+    """
+    dp = Path(dp)
+    has = lambda name: (dp / name).is_file()
+    if has(GUEST_PDB) and has(COMPLEX_PDB):
+        if not (has(GUEST_MOL2) and has(GUEST_FRCMOD)):
+            return "parametrize"
+        return "apr_setup" if scan(dp)[0] in SETUP_STATES else DONE
+    if placement_inputs(dp):
+        return "placement"
+    if has(f"{dp.name}.smi"):
+        return "structure"
+    return None
+
+
+def all_data_points(only=None, data_dir=DATA):
+    """Folders in the data directory that any setup stage recognizes (including done ones), sorted."""
+    data_dir = Path(data_dir)
+    if not data_dir.is_dir():
+        return []
+    return sorted(p for p in data_dir.iterdir()
+                  if p.is_dir() and (not only or p.name in only) and next_stage(p) is not None)
 
 
 def scan(dp):
