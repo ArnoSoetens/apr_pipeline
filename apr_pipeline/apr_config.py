@@ -148,6 +148,13 @@ def _validate(cfg):
         or (isinstance(net_charge, int) and not isinstance(net_charge, bool)),
         "parametrize.net_charge must be 'auto' or an integer",
     )
+    output_pdb = cfg["structure"]["output_pdb"]
+    need(
+        isinstance(output_pdb, str) and output_pdb.endswith(".pdb")
+        and Path(output_pdb).name == output_pdb
+        and output_pdb not in (f'{cfg["naming"]["complex_prefix"]}.pdb', "sqm.pdb"),
+        "structure.output_pdb must be a file name ending in .pdb (not the complex PDB or sqm.pdb)",
+    )
     _radii_for(cfg)
 
 
@@ -156,6 +163,7 @@ def load_config(path=CONFIG_PATH):
         cfg = tomllib.load(f)
 
     cfg["analysis"].setdefault("convergence_plot", True)
+    cfg["structure"].setdefault("output_pdb", f'{cfg["naming"]["guest_prefix"]}.pdb')
     walls = cfg["apr"]["restraints"].setdefault("walls", {})
     distance_wall = walls.setdefault("distance", {})
     distance_wall.setdefault("enabled", False)

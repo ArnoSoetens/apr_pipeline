@@ -4,21 +4,16 @@ import subprocess
 import sys
 
 from apr_config import CFG
+from guest_input import net_charge
 
 
 def parametrize(
     data_dir,
     guest_pdb=f'{CFG["naming"]["guest_prefix"]}.pdb',
     guest_prefix=CFG["naming"]["guest_prefix"],
-    net_charge=None,
 ):
-    configured_charge = CFG["parametrize"]["net_charge"]
-    if configured_charge == "auto":
-        if net_charge is None:
-            raise ValueError("net_charge is required when parametrize.net_charge = 'auto'")
-        charge = net_charge
-    else:
-        charge = configured_charge
+    """antechamber + parmchk2 on the guest PDB; the charge comes from guest_input.net_charge()."""
+    charge = net_charge(data_dir)
 
     result = subprocess.run(
     [
@@ -56,7 +51,7 @@ def parametrize(
     return
 
 
-def parametrize_data_points(data_dir=CFG["directories"]["data"], names=None, net_charge=None):
+def parametrize_data_points(data_dir=CFG["directories"]["data"], names=None):
     """Parametrize data-point folders containing the configured guest PDB."""
     data_dir = Path(data_dir)
     if not data_dir.is_dir():
@@ -92,7 +87,7 @@ def parametrize_data_points(data_dir=CFG["directories"]["data"], names=None, net
             continue
 
         try:
-            parametrize(directory, net_charge=net_charge)
+            parametrize(directory)
             parametrized += 1
             print(f"{directory.name}: parametrized {guest_pdb}", flush=True)
         except (OSError, ValueError, subprocess.CalledProcessError) as error:
@@ -112,7 +107,8 @@ def parametrize_data_points(data_dir=CFG["directories"]["data"], names=None, net
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Parametrize guest PDBs in data-point folders."
+        description="Parametrize guest PDBs in data-point folders. The guest charge comes from "
+                    "config.toml parametrize.net_charge, or with \"auto\" from each guest_input.json."
     )
     parser.add_argument(
         "names",
@@ -120,24 +116,8 @@ def main(argv=None):
         metavar="DATA_POINT",
         help="data-point folders to process (default: folders containing the guest PDB)",
     )
-    parser.add_argument(
-        "--net-charge",
-        type=int,
-        help="overall guest charge (required when parametrize.net_charge = 'auto')",
-    )
     args = parser.parse_args(argv)
-
-    configured_charge = CFG["parametrize"]["net_charge"]
-    if configured_charge == "auto" and args.net_charge is None:
-        parser.error(
-            "--net-charge is required because parametrize.net_charge is configured as 'auto'"
-        )
-    if configured_charge != "auto" and args.net_charge is not None:
-        parser.error(
-            "--net-charge cannot be used when parametrize.net_charge is a fixed integer"
-        )
-
-    return parametrize_data_points(names=args.names or None, net_charge=args.net_charge)
+    return parametrize_data_points(names=args.names or None)
 
 
 if __name__ == "__main__":

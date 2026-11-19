@@ -41,6 +41,7 @@ from structure import *
 from parametrize import *
 from placement import *
 from apr_setup import *
+from guest_input import anchors, save_anchors, update_guest_input
 from datapoints import (
     SETUP_STATES,
     clear_failed,
@@ -101,24 +102,33 @@ for i, name in enumerate(names, 1):
 
     try:
         if use_prepared_files:
-            mol = Chem.MolFromPDBFile(prepared_files[0], removeHs=False)
-            if mol is None:
-                raise ValueError(f"could not read prepared guest PDB: {prepared_files[0]}")
+            G1_G2 = anchors(data_point_dir)
+            if G1_G2 is None:      # prepared before guest_input.json existed: find them as before, and save
+                mol = Chem.MolFromPDBFile(prepared_files[0], removeHs=False)
+                if mol is None:
+                    raise ValueError(f"could not read prepared guest PDB: {prepared_files[0]}")
+                chain = find_carbon_backbone_chain(mol)
+                if len(chain) < 2:
+                    raise ValueError(f"guest needs at least two connected carbon atoms: {prepared_files[0]}")
+                G1_G2 = pick_backbone_alignment_atoms(chain)
+                save_anchors(data_point_dir, *G1_G2)
+            G1, G2 = G1_G2
         else:
             with open(smi_file) as f:
                 smiles = f.read().strip()
-            mol = smiles_to_pdb(smiles, prepared_files[0])
+            mol = smiles_to_pdb(smiles, os.path.join(data_point_dir, CFG["structure"]["output_pdb"]))
+            update_guest_input(data_point_dir, smiles=smiles, net_charge=Chem.GetFormalCharge(mol))
 
-        chain = find_carbon_backbone_chain(mol)
-        if len(chain) < 2:
-            raise ValueError(f"guest needs at least two connected carbon atoms: {prepared_files[0]}")
-        G1, G2 = pick_backbone_alignment_atoms(chain)
+            chain = find_carbon_backbone_chain(mol)
+            if len(chain) < 2:
+                raise ValueError(f"guest needs at least two connected carbon atoms: {smiles}")
+            G1, G2 = pick_backbone_alignment_atoms(chain)
 
-        if not use_prepared_files:
             guest_aligned = place_guest_in_cavity(mol, G1, G2)[0]
             generate_pdb(host, guest_aligned, out_dir=data_point_dir)
+            save_anchors(data_point_dir, G1, G2)
 
-            parametrize(data_point_dir, net_charge=Chem.GetFormalCharge(mol))
+            parametrize(data_point_dir)
 
         setup_datapoint(data_point_dir, host_dir, G1, G2)
     except Exception as e:

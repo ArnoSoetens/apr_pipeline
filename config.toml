@@ -31,6 +31,9 @@ folder_digits  = 5
 
 # ---------------------------------------------------------------------------
 [structure]                  # SMILES -> 3D guest (RDKit)
+output_pdb    = "UNL.pdb"    # file the 3D guest is written to in the data point folder. Use the same
+                             # name as <guest_prefix>.pdb to let placement overwrite it (one file less);
+                             # any other name keeps the unplaced structure next to the placed one.
 conformers    = 1
 random_seed   = 42
 uff_max_iters = 1000
@@ -44,7 +47,9 @@ guest_resnum  = 2                 # residue number of the guest in the PDB files
 
 # ---------------------------------------------------------------------------
 [parametrize]                # antechamber / parmchk2
-net_charge    = "auto"       # "auto" uses the RDKit formal charge of each guest; or set an integer
+net_charge    = "auto"       # "auto": each data point's guest_input.json net_charge (filled in from the
+                             # SMILES by structure; set it by hand for guests that start as a PDB).
+                             # An integer applies to every data point and wins over guest_input.json.
 charge_method = "bcc"
 atom_type     = "gaff"       # antechamber -at, and leaprc.<atom_type> in tleap
 parmchk_set   = 1            # parmchk2 -s  (1 = gaff, 2 = gaff2)

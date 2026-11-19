@@ -30,6 +30,7 @@ from rdkit import Chem
 from scipy.spatial.distance import cdist
 
 from apr_config import CFG
+from guest_input import save_anchors
 
 __all__ = [
     "rotation_matrix_from_vectors",
@@ -353,6 +354,7 @@ def place_custom_pdbs(data_dir=CFG["directories"]["data"], names=None):
             b1_idx, b2_idx = pick_backbone_alignment_atoms(chain)
             guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx)[0]
             generate_pdb(host, guest_aligned, out_dir=directory)
+            save_anchors(directory, b1_idx, b2_idx)
             placed += 1
             print(f"{directory.name}: placed {input_pdb.name} -> {guest_name}", flush=True)
         except (OSError, ValueError, RuntimeError) as error:

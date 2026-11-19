@@ -167,14 +167,28 @@ To parametrize guest PDBs separately, run:
 
 ```
 python apr_pipeline/parametrize.py                       # all folders containing UNL.pdb
-python apr_pipeline/parametrize.py my_guest --net-charge 0
+python apr_pipeline/parametrize.py my_guest
 ```
 
-When `parametrize.net_charge = "auto"` in `config.toml`, standalone
-parametrization requires `--net-charge` because a PDB file alone does not
-reliably provide the guest's formal charge. `scripts/main.py` continues to
-derive the charge from each SMILES molecule and pass it to the same
-parametrization function.
+Each data point has a `guest_input.json` that the setup stages hand to each other:
+
+```json
+{ "smiles": "[O-]C(=O)C(F)(F)C(F)(F)C(F)(F)F", "net_charge": -1, "anchors": [1, 5] }
+```
+
+* `smiles` and `net_charge` are written when the guest is built from its `.smi`
+  (the charge is the formal charge of the SMILES). For a guest that starts as a
+  PDB they are `null`: a PDB alone does not reliably give the charge, so set
+  `net_charge` by hand before parametrizing.
+* `anchors` are the G1/G2 backbone atoms used for the APR restraints, as atom
+  serial numbers in `UNL.pdb` (its second column). Placement writes them; setup
+  reads them. Folders prepared before this file existed get them recomputed from
+  `UNL.pdb` and saved.
+* With `parametrize.net_charge = "auto"` in `config.toml` each data point uses
+  its own `net_charge`; an integer there applies to every data point instead.
+
+`structure.output_pdb` in `config.toml` names the file the 3D guest built from
+the SMILES is written to. With the default `UNL.pdb`, placement overwrites it.
 
 Create or edit the SMILES text file locally before submitting. By default, the array script reads
 `data/Seven_PFAS.txt` (`directories.smiles_list` in `config.toml`), which must contain one SMILES
