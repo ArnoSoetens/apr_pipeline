@@ -60,17 +60,21 @@ def wall_test_structure_without_host():
 
 
 class WallRestraintTests(unittest.TestCase):
-    def test_guest_masks_reverses_indices_for_negative_z_backbone(self):
+    def guest_masks_for_z(self, z_values, b1_idx, b2_idx):
         guest_atoms = [
-            SimpleNamespace(idx=0, xz=4.0, residue=SimpleNamespace(name="UNL")),
-            SimpleNamespace(idx=1, xz=0.0, residue=SimpleNamespace(name="UNL")),
+            SimpleNamespace(idx=i, xx=0.0, xy=0.0, xz=z, residue=SimpleNamespace(name="UNL"))
+            for i, z in enumerate(z_values)
         ]
         structure = SimpleNamespace(atoms=guest_atoms)
-
         with patch.object(apr_setup.pmd, "load_file", return_value=structure):
-            g1, g2 = apr_setup.guest_masks(0, 1)
+            return apr_setup.guest_masks(b1_idx, b2_idx)
 
-        self.assertEqual((g1, g2), (":UNL@2", ":UNL@1"))
+    def test_guest_masks_keep_the_given_order_when_g1_is_lower(self):
+        self.assertEqual(self.guest_masks_for_z([4.0, 0.0], 1, 0), (":UNL@2", ":UNL@1"))
+
+    def test_guest_masks_refuse_anchors_that_point_down_instead_of_swapping(self):
+        with self.assertRaisesRegex(ValueError, "--from placement"):
+            self.guest_masks_for_z([4.0, 0.0], 0, 1)
 
     def test_dummy_anchor_validation_requires_dm1_closer_to_g1(self):
         structure = pmd.Structure()

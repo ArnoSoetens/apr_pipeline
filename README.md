@@ -193,10 +193,26 @@ Each data point has a `guest_input.json` that the setup stages hand to each othe
   (the charge is the formal charge of the SMILES). For a guest that starts as a
   PDB they are `null`: a PDB alone does not reliably give the charge, so set
   `net_charge` by hand before parametrizing.
-* `anchors` are the G1/G2 backbone atoms used for the APR restraints, as atom
-  serial numbers in `UNL.pdb` (its second column). Placement writes them; setup
-  reads them. Folders prepared before this file existed get them recomputed from
-  `UNL.pdb` and saved.
+* `anchors` are G1 and G2, the guest atoms the APR restraints hold, as atom
+  serial numbers in `UNL.pdb` (its second column). G1 is the end nearest the
+  dummy atoms: G1→G2 points along `placement.cavity_axis`, the way the guest is
+  pulled out. Folders prepared before this file existed get them recomputed from
+  `UNL.pdb` (lower end first) and saved.
+  * `null` (the default): placement takes the two ends of the longest carbon
+    chain and turns the guest as little as possible, so a guest given upside
+    down stays upside down. Whichever end then sits lower becomes G1, and both
+    are written to the file.
+  * Set by hand: placement uses them as given and turns the guest until G1→G2
+    points along `cavity_axis`, however far that is. They are never
+    overwritten. Either write them before the first run (the input PDB must then
+    number its atoms 1 to N in order, otherwise placement refuses it), or place
+    the guest once, read the numbers from `UNL.pdb`, edit the file and rerun with
+    `main.py my_guest --from placement`. Set them back to `null` to return to the
+    automatic choice, e.g. after replacing the input PDB with one in a different
+    orientation.
+  * APR setup never swaps them. If they don't match the placed guest (G1 above
+    G2, e.g. after editing them and running only `--from apr_setup`), it stops
+    and asks you to redo `--from placement`.
 * With `parametrize.net_charge = "auto"` in `config.toml` each data point uses
   its own `net_charge`; an integer there applies to every data point instead.
 

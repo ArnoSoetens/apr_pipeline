@@ -32,13 +32,15 @@ from scipy.spatial.distance import cdist
 
 from apr_config import CFG
 from datapoints import placement_inputs
-from guest_input import ensure_guest_input, save_anchors
+from guest_input import anchors, ensure_guest_input, save_anchors
 
 GUEST_PDB = f'{CFG["naming"]["guest_prefix"]}.pdb'
 
 __all__ = [
     "rotation_matrix_from_vectors",
     "place_guest_in_cavity",
+    "order_anchors",
+    "check_serials",
     "clash_report",
     "radial_containment",
     "Mol_to_PDB",
@@ -71,7 +73,14 @@ def rotation_matrix_from_vectors(a, b):
 
 
 def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=CFG["placement"]["cavity_center"],
-                          cavity_axis=CFG["placement"]["cavity_axis"]):
+                          cavity_axis=CFG["placement"]["cavity_axis"], allow_flip=True):
+    """Put the b1-b2 midpoint at cavity_center with the b1-b2 axis along cavity_axis.
+
+    allow_flip=True: b1->b2 ends up along +cavity_axis or -cavity_axis, whichever moves the atoms
+    least (a guest given upside down stays upside down). allow_flip=False: b1->b2 always ends up
+    along +cavity_axis, however far the guest has to turn.
+    Returns (placed molecule, rotation matrix, original b1-b2 midpoint).
+    """
     coords = guest_mol.GetConformer().GetPositions()
 
     backbone_axis = coords[b2_idx] - coords[b1_idx]
@@ -79,10 +88,9 @@ def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=CFG["placemen
     backbone_midpoint = (coords[b1_idx] + coords[b2_idx]) / 2.0
 
     centered_coords = coords - backbone_midpoint
-    rotations = (
-        rotation_matrix_from_vectors(backbone_axis, cavity_axis),
-        rotation_matrix_from_vectors(backbone_axis, -np.asarray(cavity_axis)),
-    )
+    rotations = [rotation_matrix_from_vectors(backbone_axis, cavity_axis)]
+    if allow_flip:
+        rotations.append(rotation_matrix_from_vectors(backbone_axis, -np.asarray(cavity_axis)))
     R = min(
         rotations,
         key=lambda rotation: np.sum(
@@ -97,6 +105,34 @@ def place_guest_in_cavity(guest_mol, b1_idx, b2_idx, cavity_center=CFG["placemen
         x, y, z = new_coords[i]
         conf.SetAtomPosition(i, (float(x), float(y), float(z)))
     return new_mol, R, backbone_midpoint
+
+
+def order_anchors(coords, b1_idx, b2_idx, cavity_axis=CFG["placement"]["cavity_axis"]):
+    """(G1, G2): the two anchors with G1 the lower one along cavity_axis (the end nearest the
+    dummy atoms), so G1->G2 points along +cavity_axis, the direction the guest is pulled out."""
+    coords = np.asarray(coords, dtype=float)
+    if np.dot(coords[b2_idx] - coords[b1_idx], np.asarray(cavity_axis, dtype=float)) < 0:
+        return b2_idx, b1_idx
+    return b1_idx, b2_idx
+
+
+def check_serials(pdb_path):
+    """Raise unless the atom serials (column 2) of a PDB run 1, 2, ..., N in file order.
+
+    Anchors in guest_input.json are positions in the file; this makes them the column-2 numbers.
+    """
+    serials = []
+    for line in Path(pdb_path).read_text().splitlines():
+        if line.startswith(("ATOM", "HETATM")):
+            try:
+                serials.append(int(line[6:11]))
+            except ValueError:
+                serials.append(None)
+    if serials != list(range(1, len(serials) + 1)):
+        raise ValueError(
+            f"{pdb_path} does not number its atoms 1 to {len(serials)} in order (column 2), so the "
+            "anchors in guest_input.json could point at other atoms than you mean; renumber the "
+            f"file, or set anchors to null, place it, and pick the numbers from {GUEST_PDB}")
 
 
 def clash_report(host_mol, guest_mol, clash_cutoff=CFG["placement"]["clash_cutoff"]):
@@ -311,13 +347,19 @@ def run(dp):
     """Placement stage: the folder's one guest PDB -> <guest>.pdb + <complex>.pdb in the host cavity.
 
     The input is datapoints.placement_inputs(dp) (any .pdb except the complex PDB and sqm.pdb;
-    <guest>.pdb only when it is the only one). Stores the G1/G2 anchors in guest_input.json.
+    <guest>.pdb only when it is the only one).
+    G1/G2 anchors:
+      - set in guest_input.json: used as given; G1->G2 is turned onto +cavity_axis, however far.
+        The input's atoms must be numbered 1..N (check_serials).
+      - null: the ends of the longest carbon chain. The guest turns as little as possible (so an
+        upside-down input stays upside down), then the lower end is called G1, and both are saved.
     Returns the input PDB's path. Raises on a clash or an unusable input.
     """
     from structure import backbone_anchors
 
     dp = Path(dp)
     ensure_guest_input(dp)
+    chosen = anchors(dp)
     input_pdbs = placement_inputs(dp)
     if len(input_pdbs) != 1:
         found = ", ".join(p.name for p in input_pdbs) or "none"
@@ -335,10 +377,21 @@ def run(dp):
             residue_info.SetResidueName("UNL")
             residue_info.SetIsHeteroAtom(True)
 
-    b1_idx, b2_idx = backbone_anchors(guest, source=str(input_pdb))
-    guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx)[0]
+    if chosen is None:
+        b1_idx, b2_idx = backbone_anchors(guest, source=str(input_pdb))
+        guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx)[0]
+        b1_idx, b2_idx = order_anchors(guest_aligned.GetConformer().GetPositions(), b1_idx, b2_idx)
+    else:
+        check_serials(input_pdb)
+        b1_idx, b2_idx = chosen
+        n_atoms = guest.GetNumAtoms()
+        if max(b1_idx, b2_idx) >= n_atoms:
+            raise ValueError(f"anchors {[b1_idx + 1, b2_idx + 1]} in guest_input.json: "
+                             f"{input_pdb.name} has only {n_atoms} atoms")
+        guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx, allow_flip=False)[0]
     generate_pdb(load_host(), guest_aligned, out_dir=dp)
-    save_anchors(dp, b1_idx, b2_idx)
+    if chosen is None:
+        save_anchors(dp, b1_idx, b2_idx)
     return input_pdb
 
 

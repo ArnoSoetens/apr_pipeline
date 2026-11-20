@@ -150,6 +150,28 @@ class SetupEndToEndTests(unittest.TestCase):
         self.assertIn("1 done, 0 failed", out)
         self.assertGreater((placed / COMPLEX_PDB).stat().st_mtime_ns, complex_before)
 
+    def test_edited_anchors_need_placement_again(self):
+        dp = self.data / "turned"
+        dp.mkdir()
+        (dp / "turned.smi").write_text(PFBA_ANION + "\n")
+        code, out = self.run_script("scripts/main.py", "turned")
+        self.assertIn("1 done, 0 failed", out)
+        values = self.guest_input("turned")
+        g1, g2 = values["anchors"]
+
+        # the other way round: apr_setup alone refuses instead of swapping them back
+        values["anchors"] = [g2, g1]
+        (dp / "guest_input.json").write_text(json.dumps(values))
+        code, out = self.run_script("scripts/main.py", "--from", "apr_setup", "turned")
+        self.assertIn("turned FAILED in apr_setup:", out)
+        self.assertIn("--from placement", out)
+
+        # placing again along the edited anchors makes them fit, and keeps them
+        code, out = self.run_script("scripts/main.py", "--from", "placement", "turned")
+        self.assertIn("1 done, 0 failed", out)
+        self.assertEqual(self.guest_input("turned")["anchors"], [g2, g1])
+        self.assertFalse((dp / "setup_failed.txt").exists())
+
     def test_failure_names_the_stage_and_the_loop_goes_on(self):
         for name, smiles in (("bad", "C(("), ("good", PFBA_ANION)):
             (self.data / name).mkdir()

@@ -75,6 +75,14 @@ def build_system( data_dir_host, data_dir_guest, host_prefix=HOST, guest_prefix=
 # Orientation 1: C3 leads (faces away from host opening during pull).
 
 def guest_masks(b1_idx, b2_idx, guest_prefix=GUEST):
+    """Amber masks of the G1/G2 anchors (0-based guest atom indices), in the given order.
+
+    Placement turns G1->G2 onto +cavity_axis, so G1 is the end nearest the dummy atoms. Raises when
+    the placed guest has them the other way round (e.g. anchors edited after placement), instead
+    of swapping them: the anchors in guest_input.json are used exactly as written.
+    """
+    from placement import order_anchors
+
     s = pmd.load_file("complex/vac.prmtop", "complex/vac.rst7", structure=True)
     guest_atoms = [a for a in s.atoms if a.residue.name == guest_prefix]
     if not (0 <= b1_idx < len(guest_atoms) and 0 <= b2_idx < len(guest_atoms)):
@@ -82,9 +90,13 @@ def guest_masks(b1_idx, b2_idx, guest_prefix=GUEST):
             f"backbone atom indices ({b1_idx}, {b2_idx}) exceed the "
             f"{len(guest_atoms)} atoms in residue {guest_prefix}"
         )
-    if guest_atoms[b2_idx].xz < guest_atoms[b1_idx].xz:
-        b1_idx, b2_idx = b2_idx, b1_idx
-        print("Reversed restraint atom order to match the guest's +z orientation.")
+    coords = [(a.xx, a.xy, a.xz) for a in guest_atoms]
+    if order_anchors(coords, b1_idx, b2_idx) != (b1_idx, b2_idx):
+        raise ValueError(
+            f"anchors [{b1_idx + 1}, {b2_idx + 1}] don't match the placed guest: G1 (the first) must "
+            "be below G2 along placement.cavity_axis; redo from placement (--from placement) so the "
+            "guest is placed along these anchors"
+        )
     G1 = f":{guest_prefix}@{guest_atoms[b1_idx].idx + 1}"
     G2 = f":{guest_prefix}@{guest_atoms[b2_idx].idx + 1}"
     return G1, G2
@@ -449,11 +461,13 @@ def setup_datapoint(dp, data_dir_host, b1_idx, b2_idx, host_prefix=HOST, guest_p
 def run(dp):
     """APR setup stage: guest/complex PDBs + parameters -> complex/ and windows/.
 
-    The G1/G2 anchors come from guest_input.json. Folders prepared before that file existed
-    get them from the guest PDB's carbon backbone (as placement picks them), and they are saved.
+    The G1/G2 anchors come from guest_input.json, used as written (guest_masks checks they match
+    the placed guest). Folders prepared before that file existed get them from the placed guest
+    PDB's carbon backbone, lower end first (as placement picks them), and they are saved.
     """
     from rdkit import Chem
     from guest_input import anchors, ensure_guest_input, save_anchors
+    from placement import order_anchors
     from structure import backbone_anchors
 
     dp = Path(dp).resolve()          # setup_datapoint() changes into dp, so no relative paths
@@ -467,6 +481,7 @@ def run(dp):
         mol = Chem.MolFromPDBFile(str(guest_pdb), removeHs=False)
         if mol is None:
             raise ValueError(f"could not read guest PDB: {guest_pdb}")
-        b1_b2 = backbone_anchors(mol, source=str(guest_pdb))
+        b1_b2 = order_anchors(mol.GetConformer().GetPositions(),
+                              *backbone_anchors(mol, source=str(guest_pdb)))
         save_anchors(dp, *b1_b2)
     setup_datapoint(str(dp), CFG["directories"]["host"], *b1_b2)

@@ -4,13 +4,16 @@
       "smiles": "[O-]C(=O)C(F)(F)C(F)(F)C(F)(F)F",  from <name>.smi; null when the guest started as a PDB
       "net_charge": -1,                             formal charge of that SMILES; null when the guest
                                                     started as a PDB: fill it in by hand
-      "anchors": [1, 5]                             written by placement: the G1/G2 backbone atoms, as the
-                                                    atom serial numbers in <guest_prefix>.pdb (column 2)
+      "anchors": [1, 5]                             G1, G2: the restrained guest atoms, as the atom serial
+                                                    numbers in <guest_prefix>.pdb (column 2). null:
+                                                    placement picks the carbon chain ends, G1 the lower
+                                                    one, and writes them here. Set by hand: placement
+                                                    turns G1->G2 onto +cavity_axis and keeps them.
     }
 
 Every setup stage starts with ensure_guest_input(), so the file exists as soon as any stage has
 touched the data point. Every value can be edited by hand; the next stage reads what is in the file,
-and smiles/net_charge are only filled in automatically while they are still null.
+and smiles/net_charge/anchors are only filled in automatically while they are still null.
 config.toml parametrize.net_charge = "auto" uses this file's net_charge; an integer there
 applies to every data point and wins over this file.
 """
