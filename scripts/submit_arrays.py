@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Submit setup, simulations and analysis as slurm arrays.
 
-    python submit_arrays.py status                 # what is finished and what is left
+    python submit_arrays.py status                 # what is finished and what is left, per stage
     python submit_arrays.py setup --submit         # main.py for the data points that need it
     python submit_arrays.py all                    # show what would be submitted (nothing is submitted)
     python submit_arrays.py all --submit           # setup -> simulations -> analysis -> results.csv
@@ -10,8 +10,9 @@
 
 Setup
     If no data point folders exist yet, they are created from the configured SMILES list.
-    Data points without complete windows are cut into tasks of a few data points; each task runs main.py for its
-    data points. A failed data point gets a setup_failed.txt and is left out next time (--retry-failed).
+    Data points whose setup is not finished (any stage still to do, see 'status') are cut into tasks
+    of a few data points; each task runs main.py for its data points, which starts each one at the
+    stage it needs. A failed data point gets a setup_failed.txt and is left out next time (--retry-failed).
     The 'all' command chains setup, simulations, analysis and collection. Setting up serially is
     also possible: python scripts/main.py.
 Simulation
@@ -51,10 +52,12 @@ from apr_config import CFG
 from datapoints import (
     DATA,
     FAILED_FILE,
+    STAGES,
     WINDOWS,
     all_data_points,
     ensure_data_directories,
     failure_reason,
+    next_stage,
     scan,
 )
 
@@ -268,27 +271,66 @@ def submit_batch_log_cleanup(batch_number, batch_names, sim_ids, analysis_id, do
     run_sbatch(cmd, do_submit, "<cleanup_logs_job>")
 
 
-def show_status(dps):
-    by_state, windows_left = {}, 0
-    for dp in dps:
-        st, left = scan(dp)
-        by_state.setdefault(st, []).append(dp.name)
-        windows_left += len(left)
-    labels = [("analyzed", "analysis done"),
-              ("needs_analysis", "simulated, analysis still to do"),
-              ("needs_simulation", "windows ready, simulation not finished"),
-              ("setup_incomplete", "setup incomplete (some window folders missing)"),
-              ("setup_failed", "setup failed (setup_failed.txt says why; 'setup --retry-failed')"),
-              ("no_windows", "no windows folder yet (setup not run)")]
-    print(f"{len(dps)} data points in {DATA}")
-    for key, label in labels:
-        names = by_state.get(key, [])
+STAGE_LABELS = {
+    "structure": "need structure    (only <name>.smi)",
+    "placement": "need placement    (a guest PDB, not placed yet)",
+    "parametrize": "need parametrize  (placed, no mol2/frcmod yet)",
+    "apr_setup": "need apr_setup    (parametrized, windows not built)",
+}
+RUN_LABELS = [
+    ("needs_simulation", "windows ready, simulation not finished"),
+    ("needs_analysis", "simulated, analysis still to do"),
+    ("analyzed", "analysis done"),
+]
+
+
+def setup_stage(dp):
+    """The setup stage dp still needs (one of STAGES), or None when its setup is done."""
+    stage = next_stage(dp)
+    return stage if stage in STAGES else None
+
+
+def show_status(dps, only=None):
+    def line(names, label, indent="  "):
         if names:
             more = ", ..." if len(names) > 3 else ""
-            print(f"  {len(names):6d}  {label}   e.g. {', '.join(names[:3])}{more}")
-    for name in by_state.get("setup_failed", [])[:3]:
-        print(f"           {name}: {failure_reason(DATA / name)}")
+            print(f"{indent}{len(names):6d}  {label}   e.g. {', '.join(names[:3])}{more}")
+
+    by_stage, failed, by_state, windows_left = {}, [], {}, 0
+    for dp in dps:
+        stage = setup_stage(dp)
+        if stage and (dp / FAILED_FILE).exists():
+            failed.append(dp.name)
+        elif stage:
+            by_stage.setdefault(stage, []).append(dp.name)
+        else:
+            st, left = scan(dp)
+            by_state.setdefault(st, []).append(dp.name)
+            windows_left += len(left)
+    unrecognized = sorted(p.name for p in DATA.iterdir()
+                          if p.is_dir() and (not only or p.name in only) and next_stage(p) is None
+                          ) if DATA.is_dir() else []
+
+    print(f"{len(dps)} data points in {DATA}")
+    print("  setup (python scripts/main.py, or 'setup --submit')")
+    for stage in STAGES:
+        line(by_stage.get(stage, []), STAGE_LABELS[stage])
+    line(failed, "failed last time  (setup_failed.txt; 'setup --retry-failed')")
+    for name in failed[:3]:
+        print(f"              {name}: {failure_reason(DATA / name)}")
+    if not by_stage and not failed:
+        print("               all set up")
+    print("  simulation and analysis")
+    for key, label in RUN_LABELS:
+        line(by_state.get(key, []), label)
+    line([n for st, names in by_state.items() if st not in dict(RUN_LABELS) for n in names],
+         "simulated, but some windows lack their topology (setup leaves these alone)")
+    if not by_state:
+        print("               none set up yet")
     print(f"  windows still to simulate: {windows_left}")
+    if unrecognized:
+        print("  not a data point")
+        line(unrecognized, "folders without input any stage recognizes (no .smi or guest PDB)")
 
 
 def split_batches(names, batch_count):
@@ -329,7 +371,7 @@ def main():
 
     dps = all_data_points(args.only)
     if args.command == "status":
-        show_status(dps)
+        show_status(dps, args.only)
         return
 
     window_list, analysis_names, setup_names, failed_names = [], [], [], []
@@ -340,27 +382,23 @@ def main():
         window_list.extend(f"{name}/{window}" for window in windows)
 
     for dp in dps:
-        st, left = scan(dp)
-        has_failed_marker = (dp / FAILED_FILE).exists()
-        if has_failed_marker:
-            failed_names.append(dp.name)
-            if args.command == "all" and args.retry_failed:
-                setup_names.append(dp.name)
+        if setup_stage(dp):                      # setup not finished (datapoints.next_stage)
+            if (dp / FAILED_FILE).exists():
+                failed_names.append(dp.name)
+                if not (args.command == "all" and args.retry_failed):
+                    continue
+            setup_names.append(dp.name)
+            if args.command == "all":
                 add_windows(dp.name, WINDOWS)
                 analysis_names.append(dp.name)
-        elif st == "needs_simulation":
+            continue
+        st, left = scan(dp)
+        if st == "needs_simulation":
             add_windows(dp.name, left)
             if args.command == "all":
                 analysis_names.append(dp.name)
         elif st == "needs_analysis":
             analysis_names.append(dp.name)
-        elif st in ("no_windows", "setup_incomplete"):
-            setup_names.append(dp.name)
-            if args.command == "all":
-                add_windows(dp.name, WINDOWS)
-                analysis_names.append(dp.name)
-        elif st == "setup_failed":
-            failed_names.append(dp.name)
     if args.command in ("sim", "analysis"):
         left_out = setup_names + failed_names
         if left_out:

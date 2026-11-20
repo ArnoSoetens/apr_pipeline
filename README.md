@@ -255,7 +255,7 @@ pipeline. The `setup` command then submits the usual per-data-point setup jobs.
 ## Slurm arrays
 
 ```
-python scripts/submit_arrays.py status            # what is finished, what is left
+python scripts/submit_arrays.py status            # what is finished, what is left, per stage
 python scripts/submit_arrays.py all               # shows setup -> sim -> analysis -> collection commands
 python scripts/submit_arrays.py all --submit      # submits setup -> simulation -> analysis -> results.csv
 python scripts/submit_arrays.py all --batches 6 --submit
@@ -263,6 +263,24 @@ python scripts/submit_arrays.py all --batches 6 --clean-after-analysis --submit
 python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller packages for a small job
 ```
 
+* `status` sorts the data points by the setup stage they still need (the same rule
+  `main.py` uses), lists the ones whose setup failed with the stage and reason, then
+  counts the set-up ones by simulation/analysis state, for example:
+
+  ```
+  72 data points in .../data
+    setup (python scripts/main.py, or 'setup --submit')
+         2  need placement    (a guest PDB, not placed yet)   e.g. PFBA_m_up, PFBS_mt_up
+        24  failed last time  (setup_failed.txt; 'setup --retry-failed')   e.g. iso_00003, ...
+                iso_00003: placement: clash: 2 host-guest atom pair(s) closer than 1 A ...
+    simulation and analysis
+        30  windows ready, simulation not finished   e.g. iso_00001, ...
+        16  analysis done   e.g. iso_00010, ...
+    windows still to simulate: 912
+  ```
+
+  `setup` submits exactly the points listed under "setup" (failed ones only with
+  `--retry-failed`). A `setup_failed.txt` in a point whose setup is complete is ignored.
 * Every window that still has to be simulated goes into one list (`iso_00001/a000`, ...).
   By default, the script calculates windows per CPU from `slurm.sim_task_hours` and
   `slurm.sim_minutes_per_window`, reserving 25% of the task time. For example, 4 hours and
