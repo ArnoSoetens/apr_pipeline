@@ -153,6 +153,23 @@ fails gets `setup_failed.txt` (`<stage>: <reason>`) and the others go on.
 A data point with simulation output (any `windows/*/production.nc`) is never
 touched by setup, not even with `--from` or by name.
 
+Each stage can also be run on its own, with the same logging and
+`setup_failed.txt` as `main.py`:
+
+```
+python apr_pipeline/placement.py              # every folder whose next stage is placement
+python apr_pipeline/placement.py my_guest     # placement for data/my_guest, even if it was placed
+```
+
+The same works for `structure.py`, `parametrize.py` and `apr_setup.py`. By
+name, only that stage is redone: if the folder already had later stages'
+output, a note says so and gives the `main.py NAME --from STAGE` command that
+redoes them too. A stage script exits with code 1 when a data point failed.
+APR setup always removes an earlier `complex/` and `windows/` before building,
+so no window from an older window list (e.g. a longer pull) is left behind for
+`run.sh` to simulate. That is safe because setup never runs on a folder with a
+trajectory.
+
 The SMILES list (`directories.smiles_list`) is only read when the data
 directory has no data point folders at all.
 
@@ -160,8 +177,8 @@ For custom guest structures, create a folder under `data/` for each input and
 put exactly one input PDB (with any filename) in each folder. Then run:
 
 ```
-python apr_pipeline/placement.py             # process all data-point folders
-python apr_pipeline/placement.py my_guest    # process only data/my_guest/
+python apr_pipeline/placement.py             # every folder that still needs placement
+python apr_pipeline/placement.py my_guest    # only data/my_guest/
 ```
 
 Placement writes `UNL.pdb` and the host-guest complex PDB to the same folder as
@@ -179,7 +196,7 @@ my_guest` runs placement, parametrize and APR setup in one go for such a folder
 To parametrize guest PDBs separately, run:
 
 ```
-python apr_pipeline/parametrize.py                       # all folders containing UNL.pdb
+python apr_pipeline/parametrize.py                       # every placed folder without UNL.mol2/.frcmod
 python apr_pipeline/parametrize.py my_guest
 ```
 

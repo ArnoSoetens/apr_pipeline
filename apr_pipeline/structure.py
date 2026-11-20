@@ -15,13 +15,11 @@ This script does exactly the same, using RDKit's Python API directly --
 no compilation, no Docker, no system dependencies beyond RDKit itself
 (`pip install rdkit`).
 
-Usage:
-    python smiles2pdb.py <SMILES_string> <output_file.pdb> [num_conformers]
+Usage (the structure stage, see setup_runner.py):
+    python structure.py                 every data point with a <name>.smi and no guest PDB yet
+    python structure.py iso_00001 ...   these data points
 
-    num_conformers: Number of conformers to generate (default: 1)
-
-Example:
-    python smiles2pdb.py "Cc1c(nc2ccc(F)cc2c1C(O)=O)c3ccc(cc3)c4ccccc4" 1D3G_BRE.pdb 10
+    smiles_to_pdb(smiles, "out.pdb", num_conformers) does one SMILES from Python.
 """
 
 import sys
@@ -36,6 +34,7 @@ from pathlib import Path
 import argparse
 
 from apr_config import CFG
+from datapoints import refuse_simulated
 from guest_input import ensure_guest_input, update_guest_input
 
 
@@ -160,6 +159,7 @@ def run(dp):
 
     Fills smiles and net_charge in guest_input.json when they are still null.
     """
+    refuse_simulated(dp)
     dp = Path(dp)
     smi = dp / f"{dp.name}.smi"
     if not smi.is_file():
@@ -171,6 +171,15 @@ def run(dp):
         values = update_guest_input(dp, smiles=smiles)
     if values["net_charge"] is None:
         update_guest_input(dp, net_charge=Chem.GetFormalCharge(mol))
+
+
+def main(argv=None):
+    from setup_runner import stage_main
+    return stage_main("structure", argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 

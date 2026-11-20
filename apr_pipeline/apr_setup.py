@@ -464,12 +464,16 @@ def run(dp):
     The G1/G2 anchors come from guest_input.json, used as written (guest_masks checks they match
     the placed guest). Folders prepared before that file existed get them from the placed guest
     PDB's carbon backbone, lower end first (as placement picks them), and they are saved.
+    An earlier setup's complex/ and windows/ are removed first, so no window from an older
+    window list is left behind (there is no simulation output in them: refuse_simulated).
     """
     from rdkit import Chem
+    from datapoints import refuse_simulated
     from guest_input import anchors, ensure_guest_input, save_anchors
     from placement import order_anchors
     from structure import backbone_anchors
 
+    refuse_simulated(dp)
     dp = Path(dp).resolve()          # setup_datapoint() changes into dp, so no relative paths
     ensure_guest_input(dp)
     for name in (f"{GUEST}.pdb", f"{GUEST}.mol2", f"{GUEST}.frcmod", f"{COMPLEX}.pdb"):
@@ -484,4 +488,17 @@ def run(dp):
         b1_b2 = order_anchors(mol.GetConformer().GetPositions(),
                               *backbone_anchors(mol, source=str(guest_pdb)))
         save_anchors(dp, *b1_b2)
+    for old in ("complex", "windows"):
+        if (dp / old).is_dir():
+            shutil.rmtree(dp / old)
     setup_datapoint(str(dp), CFG["directories"]["host"], *b1_b2)
+
+
+def main(argv=None):
+    """python apr_setup.py [NAME ...]: build complex/ and windows/ for each data point."""
+    from setup_runner import stage_main
+    return stage_main("apr_setup", argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

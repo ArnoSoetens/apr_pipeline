@@ -67,6 +67,17 @@ def has_simulation_output(dp):
     return any((Path(dp) / "windows").glob(f"*/{TRAJECTORY}"))
 
 
+class HasSimulationOutput(RuntimeError):
+    """Raised by a setup stage asked to work on a data point with simulation output."""
+
+
+def refuse_simulated(dp):
+    """First line of every setup stage's run(dp): never touch a data point with simulation output."""
+    if has_simulation_output(dp):
+        raise HasSimulationOutput(
+            f"{Path(dp).name} has simulation output (windows/*/{TRAJECTORY}); setup never touches it")
+
+
 def next_stage(dp):
     """The first setup stage this data point still needs: one of STAGES, DONE, or None.
 

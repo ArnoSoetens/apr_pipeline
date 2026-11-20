@@ -7,20 +7,28 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apr_pipeline"))
 import parametrize as parametrize_module
+import setup_runner
+from datapoints import COMPLEX_PDB, GUEST_PDB
+
+
+def placed(dp):
+    dp.mkdir()
+    for name in (GUEST_PDB, COMPLEX_PDB):
+        (dp / name).write_text("PDB\n")
 
 
 class ParametrizeCliTests(unittest.TestCase):
-    def test_scans_only_folders_with_guest_pdb(self):
+    def test_without_names_only_folders_whose_next_stage_is_parametrize(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             data_dir = Path(temporary_directory)
             with_guest = data_dir / "with_guest"
-            without_guest = data_dir / "without_guest"
-            with_guest.mkdir()
-            without_guest.mkdir()
-            (with_guest / "UNL.pdb").write_text("PDB\n")
+            placed(with_guest)
+            unplaced = data_dir / "unplaced"
+            unplaced.mkdir()
+            (unplaced / "my_guest.pdb").write_text("PDB\n")
 
             with patch.object(parametrize_module, "parametrize") as run_parametrize:
-                result = parametrize_module.parametrize_data_points(data_dir=data_dir)
+                result = setup_runner.stage_main("parametrize", [], data_dir=data_dir)
 
         self.assertEqual(result, 0)
         run_parametrize.assert_called_once_with(with_guest)
@@ -40,15 +48,16 @@ class ParametrizeCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             data_dir = Path(temporary_directory)
             for name in ("a", "b"):
-                (data_dir / name).mkdir()
-                (data_dir / name / "UNL.pdb").write_text("PDB\n")
+                placed(data_dir / name)
             (data_dir / "b" / "guest_input.json").write_text(json.dumps({"net_charge": 0}))
 
             with patch.dict(parametrize_module.CFG["parametrize"], {"net_charge": "auto"}):
                 with patch.object(parametrize_module.subprocess, "run") as run:
-                    result = parametrize_module.parametrize_data_points(data_dir=data_dir)
+                    result = setup_runner.stage_main("parametrize", ["a", "b"], data_dir=data_dir)
+            failed = (data_dir / "a" / "setup_failed.txt").read_text()
 
-        self.assertEqual(result, 1)               # a failed ...
+        self.assertEqual(result, 1)
+        self.assertIn("parametrize: set net_charge", failed)               # a failed ...
         self.assertEqual(run.call_count, 2)       # ... b was still parametrized
 
 

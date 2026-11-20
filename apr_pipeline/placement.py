@@ -22,7 +22,6 @@ Files written into out_dir by generate_pdb():
                                         UNL residue set to 2
 Everything else in the PDB text is left exactly as RDKit wrote it.
 """
-import argparse
 from functools import lru_cache
 from pathlib import Path
 
@@ -31,7 +30,7 @@ from rdkit import Chem
 from scipy.spatial.distance import cdist
 
 from apr_config import CFG
-from datapoints import placement_inputs
+from datapoints import placement_inputs, refuse_simulated
 from guest_input import anchors, ensure_guest_input, save_anchors
 
 GUEST_PDB = f'{CFG["naming"]["guest_prefix"]}.pdb'
@@ -357,6 +356,7 @@ def run(dp):
     """
     from structure import backbone_anchors
 
+    refuse_simulated(dp)
     dp = Path(dp)
     ensure_guest_input(dp)
     chosen = anchors(dp)
@@ -395,55 +395,10 @@ def run(dp):
     return input_pdb
 
 
-def place_custom_pdbs(data_dir=CFG["directories"]["data"], names=None):
-    """Place one input PDB from each selected data-point directory.
-
-    Input PDBs may have any filename. Generated guest and complex PDBs are
-    excluded from input discovery. Results are written to the same directory.
-    """
-    data_dir = Path(data_dir)
-    if not data_dir.is_dir():
-        raise FileNotFoundError(f"data directory does not exist: {data_dir}")
-
-    if names:
-        directories = []
-        for name in names:
-            if Path(name).name != name or name in (".", ".."):
-                raise ValueError(f"data-point name must be a directory name: {name!r}")
-            directory = data_dir / name
-            if not directory.is_dir():
-                raise FileNotFoundError(f"data-point directory does not exist: {directory}")
-            directories.append(directory)
-    else:
-        directories = sorted(path for path in data_dir.iterdir() if path.is_dir())
-
-    failed = 0
-    placed = 0
-    for directory in directories:
-        try:
-            input_pdb = run(directory)
-            placed += 1
-            print(f"{directory.name}: placed {input_pdb.name} -> {GUEST_PDB}", flush=True)
-        except (OSError, ValueError, RuntimeError) as error:
-            failed += 1
-            print(f"{directory.name}: FAILED: {error}", flush=True)
-
-    print(f"placement finished: {placed} placed, {failed} failed", flush=True)
-    return 1 if failed else 0
-
-
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Place custom PDB guests in the configured host cavity."
-    )
-    parser.add_argument(
-        "names",
-        nargs="*",
-        metavar="DATA_POINT",
-        help="data-point folders to process (default: all folders in data)",
-    )
-    args = parser.parse_args(argv)
-    return place_custom_pdbs(names=args.names or None)
+    """python placement.py [NAME ...]: place each data point's guest PDB in the host cavity."""
+    from setup_runner import stage_main
+    return stage_main("placement", argv)
 
 
 if __name__ == "__main__":

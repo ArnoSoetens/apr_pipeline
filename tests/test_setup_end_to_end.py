@@ -143,12 +143,22 @@ class SetupEndToEndTests(unittest.TestCase):
         self.assertIn("setup is complete", out)
         self.assertIn("0 done, 0 failed, 1 skipped", out)
         complex_before = (placed / COMPLEX_PDB).stat().st_mtime_ns
+        # a window an older window list made (e.g. a longer pull) must not survive a new setup
+        (placed / "windows" / "p999").mkdir()
+        (placed / "windows" / "p999" / "disang.rest").write_text("old\n")
         code, out = self.run_script("scripts/main.py", "--from", "placement", "placed_only")
         self.assertEqual(code, 0, out)
         self.assertIn("  placement", out)
         self.assertIn("  apr_setup", out)
         self.assertIn("1 done, 0 failed", out)
         self.assertGreater((placed / COMPLEX_PDB).stat().st_mtime_ns, complex_before)
+        self.assertFalse((placed / "windows" / "p999").exists())
+        self.assertEqual(next_stage(placed), DONE)
+
+        # apr_setup.py on its own, by name
+        code, out = self.run_script("apr_pipeline/apr_setup.py", "placed_only")
+        self.assertEqual(code, 0, out)
+        self.assertIn("apr_setup finished: 1 done, 0 failed", out)
 
     def test_edited_anchors_need_placement_again(self):
         dp = self.data / "turned"

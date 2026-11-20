@@ -1,4 +1,5 @@
-"""Runs scripts/main.py for real, on a temporary project (never on data/)."""
+"""Runs scripts/main.py and the stage scripts for real, on a temporary project (never on data/)."""
+import importlib
 import os
 import re
 import shutil
@@ -10,7 +11,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apr_pipeline"))
-from datapoints import COMPLEX_PDB, GUEST_FRCMOD, GUEST_MOL2, GUEST_PDB, TRAJECTORY
+from datapoints import (COMPLEX_PDB, GUEST_FRCMOD, GUEST_MOL2, GUEST_PDB, STAGES, TRAJECTORY,
+                        HasSimulationOutput)
 
 
 def temporary_project(root):
@@ -67,6 +69,26 @@ class MainGuardTests(unittest.TestCase):
                     self.assertIn("has simulation output", result.stdout)
                     self.assertIn("0 done, 0 failed, 1 skipped", result.stdout)
                     self.assertEqual(snapshot(dp), before)
+
+            # the stage scripts: not picked without names, skipped by name
+            for stage in STAGES:
+                for args in ([], ["iso_00001"]):
+                    result = subprocess.run(
+                        [sys.executable, str(ROOT / "apr_pipeline" / f"{stage}.py"), *args],
+                        env=env, capture_output=True, text=True, timeout=300,
+                    )
+                    with self.subTest(stage=stage, args=args):
+                        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                        self.assertIn("has simulation output" if args else f"no data point in",
+                                      result.stdout)
+                        self.assertEqual(snapshot(dp), before)
+
+            # and run(dp) itself refuses, for code that calls a stage directly
+            for stage in STAGES:
+                module = importlib.import_module(stage)
+                with self.subTest(stage=stage), self.assertRaises(HasSimulationOutput):
+                    module.run(dp)
+            self.assertEqual(snapshot(dp), before)
 
 
 if __name__ == "__main__":
