@@ -111,6 +111,45 @@ class SetupEndToEndTests(unittest.TestCase):
         self.assertEqual(self.guest_input("placed"),
                          {"smiles": None, "net_charge": None, "anchors": None})
 
+    def test_main_resumes_each_point_where_its_files_end(self):
+        from structure import smiles_to_pdb
+
+        # only a guest PDB (with the charge filled in) -> starts at placement
+        pdb_only = self.data / "pdb_only"
+        pdb_only.mkdir()
+        smiles_to_pdb(PFBA_ANION, str(pdb_only / "pfba.pdb"))
+        (pdb_only / "guest_input.json").write_text(json.dumps({"net_charge": -1}))
+        code, out = self.run_script("scripts/main.py", "pdb_only")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("  structure", out)
+        self.assertIn("  placement", out)
+        self.assertIn("1 done, 0 failed", out)
+        self.assertEqual(next_stage(pdb_only), DONE)
+
+        # placed but not parametrized, like the PFBA_* folders -> starts at parametrize
+        placed = self.data / "placed_only"
+        placed.mkdir()
+        for name in ("pfba.pdb", GUEST_PDB, COMPLEX_PDB):
+            shutil.copy(pdb_only / name, placed)
+        (placed / "guest_input.json").write_text(json.dumps({"net_charge": -1}))
+        code, out = self.run_script("scripts/main.py", "placed_only")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("  placement", out)
+        self.assertIn("  parametrize", out)
+        self.assertIn("1 done, 0 failed", out)
+
+        # done -> skipped; --from placement redoes placement and everything after it
+        code, out = self.run_script("scripts/main.py", "placed_only")
+        self.assertIn("setup is complete", out)
+        self.assertIn("0 done, 0 failed, 1 skipped", out)
+        complex_before = (placed / COMPLEX_PDB).stat().st_mtime_ns
+        code, out = self.run_script("scripts/main.py", "--from", "placement", "placed_only")
+        self.assertEqual(code, 0, out)
+        self.assertIn("  placement", out)
+        self.assertIn("  apr_setup", out)
+        self.assertIn("1 done, 0 failed", out)
+        self.assertGreater((placed / COMPLEX_PDB).stat().st_mtime_ns, complex_before)
+
     def test_failure_names_the_stage_and_the_loop_goes_on(self):
         for name, smiles in (("bad", "C(("), ("good", PFBA_ANION)):
             (self.data / name).mkdir()

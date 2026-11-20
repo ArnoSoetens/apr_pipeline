@@ -1,15 +1,17 @@
 """Set up data points: guest structure, placement in the host, parametrization, APR windows.
 
-    python main.py                  serial: set up every data point folder whose windows are not complete
-                                    (folders are created from the configured SMILES list only when there are none)
-    python main.py --force          ... and redo the complete ones too
-    python main.py iso_00001 ...    set up just these data points (this is what the slurm array tasks do)
+    python main.py                          every data point folder, each from the stage it still needs
+                                            (folders are created from the configured SMILES list only
+                                            when there are none)
+    python main.py iso_00001 ...            just these data points (this is what the slurm array tasks do)
+    python main.py --from placement [...]   redo placement and everything after it, whatever exists
 
-Each data point runs its stages in order (structure -> placement -> parametrize -> apr_setup):
-all four from <name>.smi, or only apr_setup when the guest PDB, MOL2, FRCMOD and complex PDB exist.
+Stages, in order: structure -> placement -> parametrize -> apr_setup. Each data point starts at the
+first stage whose output files are missing (datapoints.next_stage), so a folder with only a PDB starts
+at placement, a placed guest at parametrize, and so on; existing outputs are trusted.
 A data point that fails gets a setup_failed.txt with the stage and reason, and the loop goes on;
 one that succeeds loses it. A data point with simulation output (any windows/*/production.nc) is
-always skipped, even with --force or by name: setup would overwrite its windows.
+always skipped, even with --from or by name: setup would overwrite its windows.
 """
 import argparse
 import subprocess
@@ -20,31 +22,29 @@ script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))   # apr_pipeline/ sits next to scripts/
 
 from apr_config import CFG
+from datapoints import (
+    DONE,
+    STAGES,
+    clear_failed,
+    ensure_data_directories,
+    has_simulation_output,
+    mark_failed,
+    next_stage,
+)
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("names", nargs="*", metavar="NAME",
                     help="data points to set up (default: all that still need it)")
-parser.add_argument("--force", action="store_true",
-                    help="serial mode: also redo data points whose windows are complete")
+parser.add_argument("--from", dest="from_stage", metavar="STAGE",
+                    choices=STAGES,
+                    help="start every selected data point at this stage, even if its outputs exist "
+                         f"({', '.join(STAGES)})")
 args = parser.parse_args()
 
 import apr_setup
 import parametrize
 import placement
 import structure
-from datapoints import (
-    COMPLEX_PDB,
-    GUEST_FRCMOD,
-    GUEST_MOL2,
-    GUEST_PDB,
-    SETUP_STATES,
-    STAGES,
-    clear_failed,
-    ensure_data_directories,
-    has_simulation_output,
-    mark_failed,
-    scan,
-)
 from guest_input import ensure_guest_input
 
 RUN_STAGE = {
@@ -54,15 +54,6 @@ RUN_STAGE = {
     "apr_setup": apr_setup.run,
 }
 assert set(RUN_STAGE) == set(STAGES)
-
-
-def stages_to_run(dp):
-    """All stages from the SMILES, or only APR setup for a fully prepared guest; None: no input."""
-    if all((dp / name).is_file() for name in (GUEST_PDB, GUEST_MOL2, GUEST_FRCMOD, COMPLEX_PDB)):
-        return ["apr_setup"]
-    if (dp / f"{dp.name}.smi").is_file():
-        return list(STAGES)
-    return None
 
 
 def describe(error):
@@ -92,16 +83,20 @@ for i, name in enumerate(names, 1):
                     "setup never touches it", flush=True)
         n_skipped += 1
         continue
-    stages = stages_to_run(dp)
-    if stages is None:
-        print(name, f"SKIPPED: needs {name}.smi or all prepared guest files "
-                    f"({GUEST_PDB}, {GUEST_MOL2}, {GUEST_FRCMOD}, {COMPLEX_PDB})", flush=True)
+    if not dp.is_dir():
+        print(name, f"SKIPPED: no such data point folder: {dp}", flush=True)
         n_skipped += 1
         continue
-    if not args.names and not args.force and scan(dp)[0] not in SETUP_STATES:
-        print(name, "SKIPPED: windows are complete (--force redoes them)", flush=True)
+    start = args.from_stage or next_stage(dp)
+    if start is None:
+        print(name, f"SKIPPED: no input any stage recognizes ({name}.smi or a guest PDB)", flush=True)
         n_skipped += 1
         continue
+    if start == DONE:
+        print(name, "SKIPPED: setup is complete (--from apr_setup redoes it)", flush=True)
+        n_skipped += 1
+        continue
+    stages = STAGES[STAGES.index(start):]
 
     stage = "guest_input"
     try:

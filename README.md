@@ -127,14 +127,34 @@ groups must be supplied in the config when rim mode is selected.
 ## Setup: serial or as an array
 
 ```
-python scripts/main.py                   # serial: folders from the configured SMILES list, then every data point that needs setup
-python scripts/main.py --force           # ... also redo the complete ones
+python scripts/main.py                       # every data point, each from the stage it still needs
 python scripts/main.py iso_00001 iso_00002   # just these (what an array task does)
+python scripts/main.py --from placement      # redo placement and everything after it (all, or the named ones)
 
 python scripts/submit_arrays.py setup --submit        # creates data point folders from the configured SMILES list
                                                       # one array task = a few data points (slurm.setup_*)
 python scripts/submit_arrays.py setup --retry-failed --submit
 ```
+
+Setup has four stages, run in this order for each data point:
+
+| stage | needs | writes |
+|---|---|---|
+| `structure` | `<name>.smi` | the 3D guest, `structure.output_pdb` (default `UNL.pdb`) |
+| `placement` | one guest PDB | `UNL.pdb` + `BCD-UNL.pdb` (guest in the host cavity) |
+| `parametrize` | `UNL.pdb` | `UNL.mol2` + `UNL.frcmod` |
+| `apr_setup` | the four files above | `complex/` and `windows/` |
+
+`main.py` looks at the files in each folder and starts at the first stage whose
+output is missing (existing files are trusted), so a folder can start from a
+SMILES, from any guest PDB, from a placed guest, or from all four prepared
+files. `--from STAGE` starts there regardless of what exists. A data point that
+fails gets `setup_failed.txt` (`<stage>: <reason>`) and the others go on.
+A data point with simulation output (any `windows/*/production.nc`) is never
+touched by setup, not even with `--from` or by name.
+
+The SMILES list (`directories.smiles_list`) is only read when the data
+directory has no data point folders at all.
 
 For custom guest structures, create a folder under `data/` for each input and
 put exactly one input PDB (with any filename) in each folder. Then run:
@@ -152,18 +172,9 @@ is the only one (next to another PDB it is an earlier placement's output).
 Folders must contain exactly one input. The guest's residue name in the input
 does not matter.
 
-To run APR setup on a datapoint whose guest files are already prepared, place
-`UNL.pdb`, `UNL.mol2`, `UNL.frcmod`, and `BCD-UNL.pdb` (using the configured
-guest and complex prefixes) in its data folder, then run:
-
-```
-python scripts/main.py <data-point>
-```
-
-`main.py` uses those files as-is and runs setup without regenerating or
-parametrizing them. Such folders are also discovered when `main.py` is run
-without names. Folders without a `.smi` file and without all four prepared
-files are skipped.
+Instead of running the stage scripts one by one, `python scripts/main.py
+my_guest` runs placement, parametrize and APR setup in one go for such a folder
+(set its charge first, see `guest_input.json` below).
 
 To parametrize guest PDBs separately, run:
 
@@ -194,16 +205,14 @@ the SMILES is written to. With the default `UNL.pdb`, placement overwrites it.
 
 Create or edit the SMILES text file locally before submitting. By default, the array script reads
 `data/Seven_PFAS.txt` (`directories.smiles_list` in `config.toml`), which must contain one SMILES
-per line. Array setup creates data-point folders from that file only when no `.smi` or fully
-prepared data-point folders exist. Serial `main.py` can use existing `.smi` folders without the
-list file, and it does not regenerate guest inputs when fully prepared data points are present.
-APR setup and analysis discover both SMILES-based and fully prepared data points. Analysis only
+per line. `main.py` and the setup array create data-point folders from that file only when the
+data directory has no data point folders yet; otherwise the list file is not needed. Analysis only
 runs when every configured window contains the configured production trajectory (normally
 `production.nc`). Result collection includes analyzed prepared data points without a `.smi` file,
 leaving the SMILES field empty. XML-to-text conversion must be done separately before running the
 pipeline. The `setup` command then submits the usual per-data-point setup jobs.
 
-* A data point that fails gets `setup_failed.txt` with the reason (shown by `status`); success removes it.
+* A data point that fails gets `setup_failed.txt` with the stage and reason (shown by `status`); success removes it.
   The `setup` array leaves failed data points out unless you pass `--retry-failed`.
 * Wait for the setup array to finish before `sim`: the simulation list is made from the windows setup creates.
 

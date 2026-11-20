@@ -57,7 +57,7 @@ class MainGuardTests(unittest.TestCase):
             before = snapshot(dp)
 
             env = {**os.environ, "APR_CONFIG": str(root / "config.toml")}
-            for args in ([], ["--force"], ["iso_00001"], ["--force", "iso_00001"]):
+            for args in ([], ["--from", "structure"], ["iso_00001"], ["--from", "apr_setup", "iso_00001"]):
                 result = subprocess.run(
                     [sys.executable, str(ROOT / "scripts" / "main.py"), *args],
                     env=env, capture_output=True, text=True, timeout=300,
