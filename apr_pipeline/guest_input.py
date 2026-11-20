@@ -1,14 +1,16 @@
 """guest_input.json: what a data point's setup stages hand to each other.
 
     {
-      "smiles": "OC(=O)C(F)(F)C(F)(F)C(F)(F)F",   written by structure; null when the guest started as a PDB
-      "net_charge": -1,                           written by structure (formal charge of the SMILES);
-                                                  null when the guest started as a PDB: fill it in by hand
-      "anchors": [1, 5]                           written by placement: the G1/G2 backbone atoms, as the
-                                                  atom serial numbers in <guest_prefix>.pdb (column 2)
+      "smiles": "[O-]C(=O)C(F)(F)C(F)(F)C(F)(F)F",  from <name>.smi; null when the guest started as a PDB
+      "net_charge": -1,                             formal charge of that SMILES; null when the guest
+                                                    started as a PDB: fill it in by hand
+      "anchors": [1, 5]                             written by placement: the G1/G2 backbone atoms, as the
+                                                    atom serial numbers in <guest_prefix>.pdb (column 2)
     }
 
-Every value can be edited by hand; the next stage reads what is in the file.
+Every setup stage starts with ensure_guest_input(), so the file exists as soon as any stage has
+touched the data point. Every value can be edited by hand; the next stage reads what is in the file,
+and smiles/net_charge are only filled in automatically while they are still null.
 config.toml parametrize.net_charge = "auto" uses this file's net_charge; an integer there
 applies to every data point and wins over this file.
 """
@@ -44,6 +46,28 @@ def update_guest_input(dp, **values):
     merged = {**read_guest_input(dp), **values}
     (Path(dp) / GUEST_INPUT).write_text(json.dumps(merged, indent=2) + "\n")
     return merged
+
+
+def smiles_charge(smiles):
+    """Formal charge of a SMILES, or None when RDKit cannot read it."""
+    from rdkit import Chem
+    mol = Chem.MolFromSmiles(smiles)
+    return None if mol is None else Chem.GetFormalCharge(mol)
+
+
+def ensure_guest_input(dp):
+    """Create guest_input.json if the data point has none; an existing file is left alone.
+
+    smiles and net_charge come from <name>.smi when the folder has one, otherwise they are null
+    (fill in net_charge by hand); anchors stay null until placement.
+    """
+    dp = Path(dp)
+    if (dp / GUEST_INPUT).is_file():
+        return read_guest_input(dp)
+    smi = dp / f"{dp.name}.smi"
+    smiles = smi.read_text().strip() if smi.is_file() else None
+    return update_guest_input(dp, smiles=smiles,
+                              net_charge=smiles_charge(smiles) if smiles else None)
 
 
 def net_charge(dp):

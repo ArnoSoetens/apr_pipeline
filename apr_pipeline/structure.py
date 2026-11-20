@@ -36,6 +36,7 @@ from pathlib import Path
 import argparse
 
 from apr_config import CFG
+from guest_input import ensure_guest_input, update_guest_input
 
 
 
@@ -142,8 +143,34 @@ def find_carbon_backbone_chain(mol):
     return nx.shortest_path(G, best[1], best[2])
 
 def pick_backbone_alignment_atoms(chain):
-    
+
     return chain[0], chain[-1]
+
+
+def backbone_anchors(mol, source="guest"):
+    """G1/G2: the two ends of the longest carbon chain (0-based atom indices)."""
+    chain = find_carbon_backbone_chain(mol)
+    if len(chain) < 2:
+        raise ValueError(f"guest needs at least two connected carbon atoms: {source}")
+    return pick_backbone_alignment_atoms(chain)
+
+
+def run(dp):
+    """Structure stage: <name>.smi -> 3D guest PDB (structure.output_pdb in config.toml).
+
+    Fills smiles and net_charge in guest_input.json when they are still null.
+    """
+    dp = Path(dp)
+    smi = dp / f"{dp.name}.smi"
+    if not smi.is_file():
+        raise FileNotFoundError(f"no SMILES file: {smi}")
+    smiles = smi.read_text().strip()
+    mol = smiles_to_pdb(smiles, str(dp / CFG["structure"]["output_pdb"]))
+    values = ensure_guest_input(dp)
+    if values["smiles"] is None:
+        values = update_guest_input(dp, smiles=smiles)
+    if values["net_charge"] is None:
+        update_guest_input(dp, net_charge=Chem.GetFormalCharge(mol))
 
 
 

@@ -86,6 +86,43 @@ class SetupEndToEndTests(unittest.TestCase):
         self.assertTrue((custom / "UNL.mol2").is_file())
         self.assertEqual(next_stage(custom), "apr_setup")
 
+        # 4. a lone UNL.pdb is a placement input; any residue name in the input works
+        lone = self.data / "lone"
+        lone.mkdir()
+        shutil.copy(smiles_dp / GUEST_PDB, lone / GUEST_PDB)
+        renamed = self.data / "renamed"
+        renamed.mkdir()
+        (renamed / "lig.pdb").write_text((smiles_dp / GUEST_PDB).read_text().replace(" UNL ", " LIG "))
+        code, out = self.run_script("apr_pipeline/placement.py", "lone", "renamed")
+        self.assertEqual(code, 0, out)
+        for dp in (lone, renamed):
+            self.assertEqual(self.guest_input(dp.name)["anchors"], values["anchors"])
+            self.assertIn(" UNL ", (dp / GUEST_PDB).read_text())
+            self.assertEqual(next_stage(dp), "parametrize")
+
+        # 5. placed before guest_input.json existed: parametrize creates it and asks for the charge
+        placed = self.data / "placed"
+        placed.mkdir()
+        for name in (GUEST_PDB, COMPLEX_PDB):
+            shutil.copy(smiles_dp / name, placed)
+        code, out = self.run_script("apr_pipeline/parametrize.py", "placed")
+        self.assertNotEqual(code, 0)
+        self.assertIn("set net_charge", out)
+        self.assertEqual(self.guest_input("placed"),
+                         {"smiles": None, "net_charge": None, "anchors": None})
+
+    def test_failure_names_the_stage_and_the_loop_goes_on(self):
+        for name, smiles in (("bad", "C(("), ("good", PFBA_ANION)):
+            (self.data / name).mkdir()
+            (self.data / name / f"{name}.smi").write_text(smiles + "\n")
+        code, out = self.run_script("scripts/main.py", "bad", "good")
+        self.assertEqual(code, 0, out)
+        self.assertIn("bad FAILED in structure:", out)
+        self.assertIn("1 done, 1 failed", out)
+        self.assertTrue((self.data / "bad" / "setup_failed.txt").read_text()
+                        .splitlines()[1].startswith("structure: "))
+        self.assertFalse((self.data / "good" / "setup_failed.txt").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

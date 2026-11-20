@@ -4,6 +4,7 @@
 
 import os
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import parmed as pmd
@@ -443,3 +444,29 @@ def setup_datapoint(dp, data_dir_host, b1_idx, b2_idx, host_prefix=HOST, guest_p
         create_windows(G1, G2, host_prefix, guest_prefix)
     finally:
         os.chdir(old)
+
+
+def run(dp):
+    """APR setup stage: guest/complex PDBs + parameters -> complex/ and windows/.
+
+    The G1/G2 anchors come from guest_input.json. Folders prepared before that file existed
+    get them from the guest PDB's carbon backbone (as placement picks them), and they are saved.
+    """
+    from rdkit import Chem
+    from guest_input import anchors, ensure_guest_input, save_anchors
+    from structure import backbone_anchors
+
+    dp = Path(dp).resolve()          # setup_datapoint() changes into dp, so no relative paths
+    ensure_guest_input(dp)
+    for name in (f"{GUEST}.pdb", f"{GUEST}.mol2", f"{GUEST}.frcmod", f"{COMPLEX}.pdb"):
+        if not (dp / name).is_file():
+            raise FileNotFoundError(f"APR setup needs {name}: {dp / name}")
+    b1_b2 = anchors(dp)
+    if b1_b2 is None:
+        guest_pdb = dp / f"{GUEST}.pdb"
+        mol = Chem.MolFromPDBFile(str(guest_pdb), removeHs=False)
+        if mol is None:
+            raise ValueError(f"could not read guest PDB: {guest_pdb}")
+        b1_b2 = backbone_anchors(mol, source=str(guest_pdb))
+        save_anchors(dp, *b1_b2)
+    setup_datapoint(str(dp), CFG["directories"]["host"], *b1_b2)

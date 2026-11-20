@@ -4,7 +4,7 @@ import subprocess
 import sys
 
 from apr_config import CFG
-from guest_input import net_charge
+from guest_input import ensure_guest_input, net_charge
 
 
 def parametrize(
@@ -51,6 +51,16 @@ def parametrize(
     return
 
 
+def run(dp):
+    """Parametrize stage: <guest>.pdb -> <guest>.mol2 + <guest>.frcmod (charge: guest_input.net_charge())."""
+    dp = Path(dp)
+    ensure_guest_input(dp)
+    guest_pdb = dp / f'{CFG["naming"]["guest_prefix"]}.pdb'
+    if not guest_pdb.is_file():
+        raise FileNotFoundError(f"guest PDB not found: {guest_pdb}")
+    parametrize(dp)
+
+
 def parametrize_data_points(data_dir=CFG["directories"]["data"], names=None):
     """Parametrize data-point folders containing the configured guest PDB."""
     data_dir = Path(data_dir)
@@ -80,14 +90,8 @@ def parametrize_data_points(data_dir=CFG["directories"]["data"], names=None):
     failed = 0
     parametrized = 0
     for directory in directories:
-        pdb_path = directory / guest_pdb
-        if not pdb_path.is_file():
-            failed += 1
-            print(f"{directory.name}: FAILED: guest PDB not found: {pdb_path}", flush=True)
-            continue
-
         try:
-            parametrize(directory)
+            run(directory)
             parametrized += 1
             print(f"{directory.name}: parametrized {guest_pdb}", flush=True)
         except (OSError, ValueError, subprocess.CalledProcessError) as error:

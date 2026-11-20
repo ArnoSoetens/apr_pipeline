@@ -146,9 +146,11 @@ python apr_pipeline/placement.py my_guest    # process only data/my_guest/
 
 Placement writes `UNL.pdb` and the host-guest complex PDB to the same folder as
 the input. The configured host (`data/BCD.pdb` by default) and placement
-settings in `config.toml` are used. Existing generated `UNL.pdb` and
-`BCD-UNL.pdb` files are ignored when finding the input; folders must contain
-exactly one other PDB.
+settings in `config.toml` are used. Any `.pdb` in the folder is an input
+except `BCD-UNL.pdb` and antechamber's `sqm.pdb`; `UNL.pdb` only counts when it
+is the only one (next to another PDB it is an earlier placement's output).
+Folders must contain exactly one input. The guest's residue name in the input
+does not matter.
 
 To run APR setup on a datapoint whose guest files are already prepared, place
 `UNL.pdb`, `UNL.mol2`, `UNL.frcmod`, and `BCD-UNL.pdb` (using the configured

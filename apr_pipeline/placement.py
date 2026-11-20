@@ -23,6 +23,7 @@ Files written into out_dir by generate_pdb():
 Everything else in the PDB text is left exactly as RDKit wrote it.
 """
 import argparse
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,10 @@ from rdkit import Chem
 from scipy.spatial.distance import cdist
 
 from apr_config import CFG
-from guest_input import save_anchors
+from datapoints import placement_inputs
+from guest_input import ensure_guest_input, save_anchors
+
+GUEST_PDB = f'{CFG["naming"]["guest_prefix"]}.pdb'
 
 __all__ = [
     "rotation_matrix_from_vectors",
@@ -293,14 +297,57 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"][
     return {"guest_pdb": guest_pdb, "complex_pdb": complex_pdb, "clash": report}, print("PDB succesfully created")
 
 
+@lru_cache(maxsize=1)
+def load_host():
+    """The configured host PDB as an RDKit molecule (read once per process)."""
+    host_path = Path(CFG["directories"]["host"]) / f'{CFG["naming"]["host_prefix"]}.pdb'
+    host = Chem.MolFromPDBFile(str(host_path), removeHs=False)
+    if host is None:
+        raise ValueError(f"could not read host PDB: {host_path}")
+    return host
+
+
+def run(dp):
+    """Placement stage: the folder's one guest PDB -> <guest>.pdb + <complex>.pdb in the host cavity.
+
+    The input is datapoints.placement_inputs(dp) (any .pdb except the complex PDB and sqm.pdb;
+    <guest>.pdb only when it is the only one). Stores the G1/G2 anchors in guest_input.json.
+    Returns the input PDB's path. Raises on a clash or an unusable input.
+    """
+    from structure import backbone_anchors
+
+    dp = Path(dp)
+    ensure_guest_input(dp)
+    input_pdbs = placement_inputs(dp)
+    if len(input_pdbs) != 1:
+        found = ", ".join(p.name for p in input_pdbs) or "none"
+        raise ValueError(f"expected exactly one guest PDB in {dp}, found {len(input_pdbs)}: {found}")
+    input_pdb = input_pdbs[0]
+    guest = Chem.MolFromPDBFile(str(input_pdb), removeHs=False)
+    if guest is None:
+        raise ValueError(f"could not read input PDB: {input_pdb}")
+
+    # generate_pdb() renames RDKit's default residue name "UNL" to guest_prefix, so give every
+    # guest atom that name first, whatever residue name the input PDB used
+    for atom in guest.GetAtoms():
+        residue_info = atom.GetPDBResidueInfo()
+        if residue_info is not None:
+            residue_info.SetResidueName("UNL")
+            residue_info.SetIsHeteroAtom(True)
+
+    b1_idx, b2_idx = backbone_anchors(guest, source=str(input_pdb))
+    guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx)[0]
+    generate_pdb(load_host(), guest_aligned, out_dir=dp)
+    save_anchors(dp, b1_idx, b2_idx)
+    return input_pdb
+
+
 def place_custom_pdbs(data_dir=CFG["directories"]["data"], names=None):
     """Place one input PDB from each selected data-point directory.
 
     Input PDBs may have any filename. Generated guest and complex PDBs are
     excluded from input discovery. Results are written to the same directory.
     """
-    from structure import find_carbon_backbone_chain, pick_backbone_alignment_atoms
-
     data_dir = Path(data_dir)
     if not data_dir.is_dir():
         raise FileNotFoundError(f"data directory does not exist: {data_dir}")
@@ -317,46 +364,13 @@ def place_custom_pdbs(data_dir=CFG["directories"]["data"], names=None):
     else:
         directories = sorted(path for path in data_dir.iterdir() if path.is_dir())
 
-    guest_name = f'{CFG["naming"]["guest_prefix"]}.pdb'
-    complex_name = f'{CFG["naming"]["complex_prefix"]}.pdb'
-    host_path = Path(CFG["directories"]["host"]) / f'{CFG["naming"]["host_prefix"]}.pdb'
-    host = Chem.MolFromPDBFile(str(host_path), removeHs=False)
-    if host is None:
-        raise ValueError(f"could not read host PDB: {host_path}")
-
     failed = 0
     placed = 0
     for directory in directories:
-        input_pdbs = sorted(
-            path for path in directory.glob("*.pdb")
-            if path.name not in {guest_name, complex_name}
-        )
         try:
-            if len(input_pdbs) != 1:
-                raise ValueError(
-                    f"expected exactly one input PDB (excluding {guest_name} and "
-                    f"{complex_name}), found {len(input_pdbs)}"
-                )
-            input_pdb = input_pdbs[0]
-            guest = Chem.MolFromPDBFile(str(input_pdb), removeHs=False)
-            if guest is None:
-                raise ValueError(f"could not read input PDB: {input_pdb}")
-
-            for atom in guest.GetAtoms():
-                residue_info = atom.GetPDBResidueInfo()
-                if residue_info is not None:
-                    residue_info.SetResidueName(CFG["naming"]["guest_prefix"])
-                    residue_info.SetIsHeteroAtom(True)
-
-            chain = find_carbon_backbone_chain(guest)
-            if len(chain) < 2:
-                raise ValueError(f"input PDB needs at least two connected carbon atoms: {input_pdb}")
-            b1_idx, b2_idx = pick_backbone_alignment_atoms(chain)
-            guest_aligned = place_guest_in_cavity(guest, b1_idx, b2_idx)[0]
-            generate_pdb(host, guest_aligned, out_dir=directory)
-            save_anchors(directory, b1_idx, b2_idx)
+            input_pdb = run(directory)
             placed += 1
-            print(f"{directory.name}: placed {input_pdb.name} -> {guest_name}", flush=True)
+            print(f"{directory.name}: placed {input_pdb.name} -> {GUEST_PDB}", flush=True)
         except (OSError, ValueError, RuntimeError) as error:
             failed += 1
             print(f"{directory.name}: FAILED: {error}", flush=True)

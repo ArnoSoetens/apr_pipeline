@@ -10,6 +10,7 @@ import guest_input
 from guest_input import (
     GUEST_INPUT,
     anchors,
+    ensure_guest_input,
     net_charge,
     read_guest_input,
     save_anchors,
@@ -46,6 +47,27 @@ class GuestInputTests(unittest.TestCase):
         (self.dp / GUEST_INPUT).write_text("{net_charge: -1")
         with self.assertRaisesRegex(ValueError, GUEST_INPUT):
             read_guest_input(self.dp)
+
+    def test_ensure_fills_smiles_and_charge_from_smi_file(self):
+        dp = self.dp / "iso_00001"
+        dp.mkdir()
+        (dp / "iso_00001.smi").write_text("[O-]C(=O)C(F)(F)F\n")
+        self.assertEqual(ensure_guest_input(dp),
+                         {"smiles": "[O-]C(=O)C(F)(F)F", "net_charge": -1, "anchors": None})
+        self.assertTrue((dp / GUEST_INPUT).is_file())
+
+    def test_ensure_without_smi_file_leaves_charge_null(self):
+        self.assertEqual(ensure_guest_input(self.dp),
+                         {"smiles": None, "net_charge": None, "anchors": None})
+        self.assertTrue((self.dp / GUEST_INPUT).is_file())
+
+    def test_ensure_leaves_an_existing_file_alone(self):
+        dp = self.dp / "iso_00001"
+        dp.mkdir()
+        (dp / "iso_00001.smi").write_text("[O-]C(=O)C(F)(F)F\n")
+        (dp / GUEST_INPUT).write_text(json.dumps({"net_charge": 0}))   # edited by hand
+        ensure_guest_input(dp)
+        self.assertEqual(json.loads((dp / GUEST_INPUT).read_text()), {"net_charge": 0})
 
     def test_auto_charge_comes_from_the_file(self):
         self.write({"net_charge": -1})

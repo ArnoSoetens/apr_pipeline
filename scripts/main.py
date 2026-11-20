@@ -5,18 +5,19 @@
     python main.py --force          ... and redo the complete ones too
     python main.py iso_00001 ...    set up just these data points (this is what the slurm array tasks do)
 
-A data point that fails gets a setup_failed.txt with the reason; one that succeeds loses it.
-A data point with simulation output (any windows/*/production.nc) is always skipped, even with
---force or by name: setup would overwrite its windows.
+Each data point runs its stages in order (structure -> placement -> parametrize -> apr_setup):
+all four from <name>.smi, or only apr_setup when the guest PDB, MOL2, FRCMOD and complex PDB exist.
+A data point that fails gets a setup_failed.txt with the stage and reason, and the loop goes on;
+one that succeeds loses it. A data point with simulation output (any windows/*/production.nc) is
+always skipped, even with --force or by name: setup would overwrite its windows.
 """
 import argparse
-import os
+import subprocess
 import sys
+from pathlib import Path
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# bootstrap: just enough to import apr_config (apr_pipeline/ sits next to scripts/)
-sys.path.insert(0, os.path.abspath(os.path.join(script_dir, "..", "apr_pipeline")))
+script_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))   # apr_pipeline/ sits next to scripts/
 
 from apr_config import CFG
 
@@ -27,117 +28,95 @@ parser.add_argument("--force", action="store_true",
                     help="serial mode: also redo data points whose windows are complete")
 args = parser.parse_args()
 
-from rdkit import Chem
-
-data_dir = CFG["directories"]["data"]
-host_dir = CFG["directories"]["host"]
-pipeline_dir = CFG["directories"]["pipeline"]
-HOST = CFG["naming"]["host_prefix"]
-GUEST = CFG["naming"]["guest_prefix"]
-
-sys.path.insert(0, pipeline_dir)   # lets Python find the "pipeline" package
-
-from structure import *
-from parametrize import *
-from placement import *
-from apr_setup import *
-from guest_input import anchors, save_anchors, update_guest_input
+import apr_setup
+import parametrize
+import placement
+import structure
 from datapoints import (
+    COMPLEX_PDB,
+    GUEST_FRCMOD,
+    GUEST_MOL2,
+    GUEST_PDB,
     SETUP_STATES,
+    STAGES,
     clear_failed,
     ensure_data_directories,
     has_simulation_output,
     mark_failed,
     scan,
 )
+from guest_input import ensure_guest_input
+
+RUN_STAGE = {
+    "structure": structure.run,
+    "placement": placement.run,
+    "parametrize": parametrize.run,
+    "apr_setup": apr_setup.run,
+}
+assert set(RUN_STAGE) == set(STAGES)
 
 
-serial = not args.names
-if serial:
+def stages_to_run(dp):
+    """All stages from the SMILES, or only APR setup for a fully prepared guest; None: no input."""
+    if all((dp / name).is_file() for name in (GUEST_PDB, GUEST_MOL2, GUEST_FRCMOD, COMPLEX_PDB)):
+        return ["apr_setup"]
+    if (dp / f"{dp.name}.smi").is_file():
+        return list(STAGES)
+    return None
+
+
+def describe(error):
+    """One-line reason, including the end of a failed command's output."""
+    if isinstance(error, subprocess.CalledProcessError):
+        output = (error.stderr or error.stdout or "").strip().splitlines()
+        return f"{error}" + (f" -- {output[-1]}" if output else "")
+    return str(error) or type(error).__name__
+
+
+if args.names:
+    names = args.names
+else:
     try:
         names = [dp.name for dp in ensure_data_directories()]
     except FileNotFoundError as e:
         sys.exit(f"main.py: {e}")
-else:
-    names = args.names
 
-HOST_PDB = os.path.join(host_dir, f"{HOST}.pdb")
-HOST_mol2 = os.path.join(host_dir, f"{HOST}.mol2")
-HOST_frcmod = os.path.join(host_dir, f"{HOST}.frcmod")
-host = Chem.MolFromPDBFile(HOST_PDB, removeHs=False)
-
-
+data_dir = Path(CFG["directories"]["data"])
 n_done = n_failed = n_skipped = 0
 for i, name in enumerate(names, 1):
-    data_point_dir = os.path.join(data_dir, name)      # full path to this isomer's folder
+    dp = data_dir / name
     print(f"[{i}/{len(names)}] {name}", flush=True)
 
-    smi_file = os.path.join(data_point_dir, f"{name}.smi")
-    prepared_files = (
-        os.path.join(data_point_dir, f"{GUEST}.pdb"),
-        os.path.join(data_point_dir, f"{GUEST}.mol2"),
-        os.path.join(data_point_dir, f"{GUEST}.frcmod"),
-        os.path.join(data_point_dir, f'{CFG["naming"]["complex_prefix"]}.pdb'),
-    )
-    if has_simulation_output(data_point_dir):
-        print(name, "SKIPPED: has simulation output (windows/*/"
-              f'{CFG["analysis"]["trajectory"]}); setup never touches it')
+    if has_simulation_output(dp):
+        print(name, f'SKIPPED: has simulation output (windows/*/{CFG["analysis"]["trajectory"]}); '
+                    "setup never touches it", flush=True)
         n_skipped += 1
         continue
-    use_prepared_files = all(os.path.isfile(path) for path in prepared_files)
-    has_smiles = os.path.isfile(smi_file)
-    if not has_smiles and not use_prepared_files:
-        print(
-            name,
-            f"SKIPPED: needs {name}.smi or all prepared guest files "
-            f"({GUEST}.pdb, {GUEST}.mol2, {GUEST}.frcmod, "
-            f'{CFG["naming"]["complex_prefix"]}.pdb)',
-        )
+    stages = stages_to_run(dp)
+    if stages is None:
+        print(name, f"SKIPPED: needs {name}.smi or all prepared guest files "
+                    f"({GUEST_PDB}, {GUEST_MOL2}, {GUEST_FRCMOD}, {COMPLEX_PDB})", flush=True)
         n_skipped += 1
         continue
-    if serial and not args.force and scan(data_point_dir)[0] not in SETUP_STATES:
-        print(name, "SKIPPED: windows are complete (--force redoes them)")
+    if not args.names and not args.force and scan(dp)[0] not in SETUP_STATES:
+        print(name, "SKIPPED: windows are complete (--force redoes them)", flush=True)
         n_skipped += 1
         continue
 
+    stage = "guest_input"
     try:
-        if use_prepared_files:
-            G1_G2 = anchors(data_point_dir)
-            if G1_G2 is None:      # prepared before guest_input.json existed: find them as before, and save
-                mol = Chem.MolFromPDBFile(prepared_files[0], removeHs=False)
-                if mol is None:
-                    raise ValueError(f"could not read prepared guest PDB: {prepared_files[0]}")
-                chain = find_carbon_backbone_chain(mol)
-                if len(chain) < 2:
-                    raise ValueError(f"guest needs at least two connected carbon atoms: {prepared_files[0]}")
-                G1_G2 = pick_backbone_alignment_atoms(chain)
-                save_anchors(data_point_dir, *G1_G2)
-            G1, G2 = G1_G2
-        else:
-            with open(smi_file) as f:
-                smiles = f.read().strip()
-            mol = smiles_to_pdb(smiles, os.path.join(data_point_dir, CFG["structure"]["output_pdb"]))
-            update_guest_input(data_point_dir, smiles=smiles, net_charge=Chem.GetFormalCharge(mol))
-
-            chain = find_carbon_backbone_chain(mol)
-            if len(chain) < 2:
-                raise ValueError(f"guest needs at least two connected carbon atoms: {smiles}")
-            G1, G2 = pick_backbone_alignment_atoms(chain)
-
-            guest_aligned = place_guest_in_cavity(mol, G1, G2)[0]
-            generate_pdb(host, guest_aligned, out_dir=data_point_dir)
-            save_anchors(data_point_dir, G1, G2)
-
-            parametrize(data_point_dir)
-
-        setup_datapoint(data_point_dir, host_dir, G1, G2)
+        ensure_guest_input(dp)
+        for stage in stages:
+            print(f"  {stage}", flush=True)
+            RUN_STAGE[stage](dp)
     except Exception as e:
-        print(name, "FAILED:", e)
-        mark_failed(data_point_dir, e)
+        reason = f"{stage}: {describe(e)}"
+        print(name, "FAILED in", reason, flush=True)
+        mark_failed(dp, reason)
         n_failed += 1
         continue
 
-    clear_failed(data_point_dir)
+    clear_failed(dp)
     n_done += 1
 
 print(f"setup finished: {n_done} done, {n_failed} failed, {n_skipped} skipped", flush=True)
