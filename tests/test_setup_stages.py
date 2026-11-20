@@ -18,6 +18,7 @@ from datapoints import (
     all_data_points,
     next_stage,
     placement_inputs,
+    scan,
 )
 
 
@@ -100,6 +101,19 @@ class SetupStageTests(unittest.TestCase):
         (dp / "windows" / "a003").mkdir(parents=True)
         (dp / "windows" / "a003" / TRAJECTORY).write_text("x\n")
         self.assertEqual(next_stage(dp), DONE)
+
+    def test_simulation_and_analysis_states(self):
+        dp = self.make("iso_00001")
+        self.build_windows(dp)
+        self.assertEqual(scan(dp), ("needs_simulation", list(WINDOWS)))
+        for window in WINDOWS:
+            (dp / "windows" / window / TRAJECTORY).write_text("x\n")
+        self.assertEqual(scan(dp), ("needs_analysis", []))
+        (dp / "results.json").write_text("{}\n")                  # analyzed, not cleaned up
+        self.assertEqual(scan(dp), ("analyzed", []))
+        for window in WINDOWS[1:]:                                 # cleaned up after analysis
+            (dp / "windows" / window / TOPOLOGY).unlink()
+        self.assertEqual(scan(dp), ("analyzed", []))
 
     def test_empty_folder_has_no_stage(self):
         self.assertIsNone(next_stage(self.make("empty")))

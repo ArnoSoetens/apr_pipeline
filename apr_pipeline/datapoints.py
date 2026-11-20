@@ -151,7 +151,7 @@ def scan(dp):
     left = [w for w in WINDOWS if not (windows / w / TRAJECTORY).is_file()]
     if left:
         return "needs_simulation", left
-    return "needs_analysis", []
+    return ("analyzed" if (dp / "results.json").exists() else "needs_analysis"), []
 
 
 def has_complete_run(dp):
