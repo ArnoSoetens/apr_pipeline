@@ -52,13 +52,15 @@ class GuestInputTests(unittest.TestCase):
         dp = self.dp / "iso_00001"
         dp.mkdir()
         (dp / "iso_00001.smi").write_text("[O-]C(=O)C(F)(F)F\n")
-        self.assertEqual(ensure_guest_input(dp),
-                         {"smiles": "[O-]C(=O)C(F)(F)F", "net_charge": -1, "anchors": None})
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": "auto"}):
+            values = ensure_guest_input(dp)
+        self.assertEqual(values, {"smiles": "[O-]C(=O)C(F)(F)F", "net_charge": -1, "anchors": None})
         self.assertTrue((dp / GUEST_INPUT).is_file())
 
     def test_ensure_without_smi_file_leaves_charge_null(self):
-        self.assertEqual(ensure_guest_input(self.dp),
-                         {"smiles": None, "net_charge": None, "anchors": None})
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": "auto"}):
+            values = ensure_guest_input(self.dp)
+        self.assertEqual(values, {"smiles": None, "net_charge": None, "anchors": None})
         self.assertTrue((self.dp / GUEST_INPUT).is_file())
 
     def test_ensure_leaves_an_existing_file_alone(self):
@@ -85,10 +87,34 @@ class GuestInputTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     net_charge(self.dp)
 
-    def test_config_integer_wins_over_the_file(self):
-        self.write({"net_charge": -1})
-        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": 0}):
+    def test_a_charge_in_the_file_wins_over_a_config_integer(self):
+        self.write({"net_charge": 0})                 # e.g. the one neutral guest in a list
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": -1}):
             self.assertEqual(net_charge(self.dp), 0)
+        self.assertEqual(read_guest_input(self.dp)["net_charge"], 0)
+
+    def test_a_config_integer_fills_an_empty_charge_and_saves_it(self):
+        self.write({"smiles": "OC(=O)C(F)(F)F", "net_charge": None})
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": -1}):
+            self.assertEqual(net_charge(self.dp), -1)
+        self.assertEqual(read_guest_input(self.dp)["net_charge"], -1)
+
+    def test_auto_fills_an_empty_charge_from_the_smiles_and_saves_it(self):
+        self.write({"smiles": "[O-]C(=O)C(F)(F)F", "net_charge": None})
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": "auto"}):
+            self.assertEqual(net_charge(self.dp), -1)
+        self.assertEqual(read_guest_input(self.dp)["net_charge"], -1)
+
+    def test_ensure_with_a_config_integer_uses_it_even_with_a_smiles(self):
+        dp = self.dp / "iso_00001"
+        dp.mkdir()
+        (dp / "iso_00001.smi").write_text("[O-]C(=O)C(F)(F)F\n")
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": 0}):
+            self.assertEqual(ensure_guest_input(dp)["net_charge"], 0)
+        pdb_only = self.dp / "pdb_only"
+        pdb_only.mkdir()
+        with patch.dict(guest_input.CFG["parametrize"], {"net_charge": -1}):
+            self.assertEqual(ensure_guest_input(pdb_only)["net_charge"], -1)
 
     def test_anchors_are_stored_as_pdb_serials(self):
         save_anchors(self.dp, 0, 4)

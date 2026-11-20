@@ -195,5 +195,50 @@ class SetupEndToEndTests(unittest.TestCase):
         self.assertFalse((self.data / "good" / "setup_failed.txt").exists())
 
 
+
+@unittest.skipUnless(shutil.which("antechamber"), "needs AmberTools")
+class ConfigChargeEndToEndTests(unittest.TestCase):
+    """parametrize.net_charge = -1 for a list of PDB guests, one of them set to 0 by hand."""
+
+    def test_config_integer_fills_empty_charges_and_keeps_hand_edits(self):
+        import re
+        from structure import smiles_to_pdb
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = temporary_project(root)
+            config = root / "config.toml"
+            config.write_text(re.sub(r'(?m)^net_charge\s*=\s*"auto"', "net_charge = -1",
+                                     config.read_text()))
+            env = {**os.environ, "APR_CONFIG": str(config)}
+
+            for name, smiles in (("anion", PFBA_ANION), ("neutral", "OC(=O)C(F)(F)C(F)(F)C(F)(F)F")):
+                (data / name).mkdir()
+                smiles_to_pdb(smiles, str(data / name / "guest.pdb"))
+            def place_and_parametrize():
+                for script in ("placement.py", "parametrize.py"):
+                    result = subprocess.run([sys.executable, str(ROOT / "apr_pipeline" / script)],
+                                            env=env, capture_output=True, text=True, timeout=600)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            # the neutral one is placed first, then its charge is set by hand
+            result = subprocess.run([sys.executable, str(ROOT / "apr_pipeline" / "placement.py"), "neutral"],
+                                    env=env, capture_output=True, text=True, timeout=600)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            values = json.loads((data / "neutral" / "guest_input.json").read_text())
+            self.assertEqual(values["net_charge"], -1)            # filled from the config
+            values["net_charge"] = 0
+            (data / "neutral" / "guest_input.json").write_text(json.dumps(values))
+            place_and_parametrize()
+
+            for name, charge in (("anion", -1), ("neutral", 0)):
+                with self.subTest(name=name):
+                    self.assertEqual(json.loads((data / name / "guest_input.json").read_text())["net_charge"],
+                                     charge)
+                    atoms = (data / name / "UNL.mol2").read_text().split("@<TRIPOS>ATOM")[1].split("@<TRIPOS>")[0]
+                    total = sum(float(line.split()[8]) for line in atoms.strip().splitlines())
+                    self.assertAlmostEqual(total, charge, places=2)
+
+
 if __name__ == "__main__":
     unittest.main()

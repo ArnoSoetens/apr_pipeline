@@ -209,10 +209,21 @@ Each data point has a `guest_input.json` that the setup stages hand to each othe
 { "smiles": "[O-]C(=O)C(F)(F)C(F)(F)C(F)(F)F", "net_charge": -1, "anchors": [1, 5] }
 ```
 
-* `smiles` and `net_charge` are written when the guest is built from its `.smi`
-  (the charge is the formal charge of the SMILES). For a guest that starts as a
-  PDB they are `null`: a PDB alone does not reliably give the charge, so set
-  `net_charge` by hand before parametrizing.
+* `smiles` is written when the folder has a `.smi`; for a guest that starts as
+  a PDB it stays `null`.
+* `net_charge` is the charge parametrize uses, always taken from this file.
+  While it is `null`, `parametrize.net_charge` in `config.toml` fills it in:
+  * `"auto"`: the formal charge of the SMILES. A PDB-only guest stays `null`
+    (a PDB alone does not reliably give the charge), and parametrize asks you
+    to set it.
+  * an integer, e.g. `-1`: that charge, for every data point. Handy for a list
+    of PDB guests that all have the same charge.
+
+  A charge already in the file is never replaced, so you can always set one
+  data point by hand (e.g. the one neutral guest in a list of anions, or a
+  SMILES charge that is wrong; then redo `--from parametrize`). To apply a
+  changed config value to a point that already has a charge, set its
+  `net_charge` back to `null`.
 * `anchors` are G1 and G2, the guest atoms the APR restraints hold, as atom
   serial numbers in `UNL.pdb` (its second column). G1 is the end nearest the
   dummy atoms: G1→G2 points along `placement.cavity_axis`, the way the guest is
@@ -233,8 +244,6 @@ Each data point has a `guest_input.json` that the setup stages hand to each othe
   * APR setup never swaps them. If they don't match the placed guest (G1 above
     G2, e.g. after editing them and running only `--from apr_setup`), it stops
     and asks you to redo `--from placement`.
-* With `parametrize.net_charge = "auto"` in `config.toml` each data point uses
-  its own `net_charge`; an integer there applies to every data point instead.
 
 `structure.output_pdb` in `config.toml` names the file the 3D guest built from
 the SMILES is written to. With the default `UNL.pdb`, placement overwrites it.

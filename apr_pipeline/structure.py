@@ -35,7 +35,7 @@ import argparse
 
 from apr_config import CFG
 from datapoints import refuse_simulated
-from guest_input import ensure_guest_input, update_guest_input
+from guest_input import default_charge, ensure_guest_input, update_guest_input
 
 
 
@@ -157,7 +157,7 @@ def backbone_anchors(mol, source="guest"):
 def run(dp):
     """Structure stage: <name>.smi -> 3D guest PDB (structure.output_pdb in config.toml).
 
-    Fills smiles and net_charge in guest_input.json when they are still null.
+    Fills smiles and net_charge (guest_input.default_charge) in guest_input.json while still null.
     """
     refuse_simulated(dp)
     dp = Path(dp)
@@ -165,12 +165,12 @@ def run(dp):
     if not smi.is_file():
         raise FileNotFoundError(f"no SMILES file: {smi}")
     smiles = smi.read_text().strip()
-    mol = smiles_to_pdb(smiles, str(dp / CFG["structure"]["output_pdb"]))
+    smiles_to_pdb(smiles, str(dp / CFG["structure"]["output_pdb"]))
     values = ensure_guest_input(dp)
     if values["smiles"] is None:
         values = update_guest_input(dp, smiles=smiles)
     if values["net_charge"] is None:
-        update_guest_input(dp, net_charge=Chem.GetFormalCharge(mol))
+        update_guest_input(dp, net_charge=default_charge(smiles))
 
 
 def main(argv=None):

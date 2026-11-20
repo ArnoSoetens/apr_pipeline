@@ -2,8 +2,10 @@
 
     {
       "smiles": "[O-]C(=O)C(F)(F)C(F)(F)C(F)(F)F",  from <name>.smi; null when the guest started as a PDB
-      "net_charge": -1,                             formal charge of that SMILES; null when the guest
-                                                    started as a PDB: fill it in by hand
+      "net_charge": -1,                             the charge parametrize uses. Filled in while null:
+                                                    with config parametrize.net_charge = "auto" from the
+                                                    SMILES (a PDB-only guest stays null: set it by hand),
+                                                    with an integer there that integer
       "anchors": [1, 5]                             G1, G2: the restrained guest atoms, as the atom serial
                                                     numbers in <guest_prefix>.pdb (column 2). null:
                                                     placement picks the carbon chain ends, G1 the lower
@@ -13,9 +15,9 @@
 
 Every setup stage starts with ensure_guest_input(), so the file exists as soon as any stage has
 touched the data point. Every value can be edited by hand; the next stage reads what is in the file,
-and smiles/net_charge/anchors are only filled in automatically while they are still null.
-config.toml parametrize.net_charge = "auto" uses this file's net_charge; an integer there
-applies to every data point and wins over this file.
+and smiles/net_charge/anchors are only filled in automatically while they are still null, so an
+edit is never overwritten. To apply a changed config net_charge to a point that already has a
+charge, set its net_charge back to null.
 """
 import json
 from pathlib import Path
@@ -61,28 +63,44 @@ def smiles_charge(smiles):
 def ensure_guest_input(dp):
     """Create guest_input.json if the data point has none; an existing file is left alone.
 
-    smiles and net_charge come from <name>.smi when the folder has one, otherwise they are null
-    (fill in net_charge by hand); anchors stay null until placement.
+    smiles comes from <name>.smi when the folder has one (otherwise null), net_charge from
+    default_charge(); anchors stay null until placement.
     """
     dp = Path(dp)
     if (dp / GUEST_INPUT).is_file():
         return read_guest_input(dp)
     smi = dp / f"{dp.name}.smi"
     smiles = smi.read_text().strip() if smi.is_file() else None
-    return update_guest_input(dp, smiles=smiles,
-                              net_charge=smiles_charge(smiles) if smiles else None)
+    return update_guest_input(dp, smiles=smiles, net_charge=default_charge(smiles))
 
 
-def net_charge(dp):
-    """The guest charge parametrize uses: the config integer, or (config "auto") this point's JSON value."""
+def default_charge(smiles):
+    """What an empty net_charge is filled with: the config integer (parametrize.net_charge), or with
+    "auto" the SMILES' formal charge (None without a SMILES)."""
     configured = CFG["parametrize"]["net_charge"]
     if configured != "auto":
         return configured
-    charge = read_guest_input(dp)["net_charge"]
+    return smiles_charge(smiles) if smiles else None
+
+
+def net_charge(dp):
+    """The guest charge parametrize uses: this point's guest_input.json net_charge.
+
+    While it is null it is filled in first (default_charge) and saved, so the file always shows
+    the charge that was used. A value in the file is never replaced, not even by a config integer.
+    """
+    path = Path(dp) / GUEST_INPUT
+    values = read_guest_input(dp)
+    charge = values["net_charge"]
+    if charge is None:
+        charge = default_charge(values["smiles"])
+        if charge is None:
+            raise ValueError(
+                f"set net_charge (an integer) in {path}: this guest has no SMILES to take it from "
+                f"(or set parametrize.net_charge in config.toml to an integer for every empty one)")
+        update_guest_input(dp, net_charge=charge)
     if isinstance(charge, bool) or not isinstance(charge, int):
-        raise ValueError(
-            f"set net_charge (an integer) in {Path(dp) / GUEST_INPUT}: "
-            f"parametrize.net_charge is \"auto\" and this guest has no charge from a SMILES")
+        raise ValueError(f"net_charge in {path} must be an integer, got {charge!r}")
     return charge
 
 

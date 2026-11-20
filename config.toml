@@ -47,9 +47,10 @@ guest_resnum  = 2                 # residue number of the guest in the PDB files
 
 # ---------------------------------------------------------------------------
 [parametrize]                # antechamber / parmchk2
-net_charge    = "auto"       # "auto": each data point's guest_input.json net_charge (filled in from the
-                             # SMILES by structure; set it by hand for guests that start as a PDB).
-                             # An integer applies to every data point and wins over guest_input.json.
+net_charge    = "auto"       # fills an empty net_charge in each guest_input.json (parametrize uses that):
+                             # "auto" = the SMILES' charge (PDB-only guests: set it in the JSON by hand);
+                             # an integer, e.g. -1 = that charge. A charge already in a JSON is never
+                             # replaced: edit it there, or set it to null to apply this value again.
 charge_method = "bcc"
 atom_type     = "gaff"       # antechamber -at, and leaprc.<atom_type> in tleap
 parmchk_set   = 1            # parmchk2 -s  (1 = gaff, 2 = gaff2)
