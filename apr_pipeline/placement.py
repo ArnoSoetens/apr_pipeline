@@ -276,11 +276,16 @@ def renumber_guest(input_path, output_path=None, resnum=CFG["placement"]["guest_
     return n_renum, n_ter
 
 
+def clash_pdb_path(out_dir, guest_prefix=CFG["naming"]["guest_prefix"]):
+    """Where a rejected guest pose goes: <guest_prefix>_clash.pdb (never a placement input)."""
+    return Path(out_dir) / f"{guest_prefix}_clash.pdb"
+
+
 def _write_clash_guest(guest_mol, out_dir, guest_prefix, resnum, resname):
-    """Persist the rejected guest pose at the normal guest PDB path."""
+    """Save the rejected guest pose as <guest_prefix>_clash.pdb, for open_windows.sh --failed-clashes."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    guest_path = out_dir / f"{guest_prefix}.pdb"
+    guest_path = clash_pdb_path(out_dir, guest_prefix)
 
     Chem.MolToPDBFile(guest_mol, str(guest_path), flavor=2)
     renumber_guest(guest_path, resnum=resnum, resname=resname, add_ter=False)
@@ -297,7 +302,8 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"][
     """Write <guest_prefix>.pdb and <complex_prefix>.pdb into out_dir.
 
     1. Clash check: if any host-guest atom pair is closer than clash_cutoff
-       (Angstrom), save the rejected guest pose and raise ValueError.
+       (Angstrom), save the rejected guest pose as <guest_prefix>_clash.pdb and
+       raise ValueError; the guest and complex PDBs are not touched.
        Pass clash_cutoff=None to skip the check.
     2. Write both files with RDKit (see Mol_to_PDB).
     3. Set the guest's residue number to `resnum` in both files, and insert a
@@ -328,6 +334,7 @@ def generate_pdb(host, guest_aligned, out_dir=".", complex_prefix=CFG["naming"][
         renumber_guest(complex_pdb, resnum=resnum, resname=resname, add_ter=True)
     except ValueError as e:
         raise ValueError(f"PDB post-processing failed: {e}") from e
+    clash_pdb_path(out_dir, guest_prefix).unlink(missing_ok=True)   # an earlier rejected pose
 
     return {"guest_pdb": guest_pdb, "complex_pdb": complex_pdb, "clash": report}, print("PDB succesfully created")
 

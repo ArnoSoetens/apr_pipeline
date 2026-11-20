@@ -37,7 +37,8 @@ GUEST_PDB = f'{CFG["naming"]["guest_prefix"]}.pdb'
 GUEST_MOL2 = f'{CFG["naming"]["guest_prefix"]}.mol2'
 GUEST_FRCMOD = f'{CFG["naming"]["guest_prefix"]}.frcmod'
 COMPLEX_PDB = f'{CFG["naming"]["complex_prefix"]}.pdb'
-NOT_GUEST_INPUT = {COMPLEX_PDB, "sqm.pdb"}   # PDBs in a data point folder that are never a guest input
+CLASH_PDB = f'{CFG["naming"]["guest_prefix"]}_clash.pdb'   # guest pose a placement rejected (clash)
+NOT_GUEST_INPUT = {COMPLEX_PDB, CLASH_PDB, "sqm.pdb"}   # PDBs in a data point folder that are never a guest input
 
 STAGES = ("structure", "placement", "parametrize", "apr_setup")
 DONE = "done"
@@ -46,7 +47,8 @@ DONE = "done"
 def placement_inputs(dp):
     """Guest PDBs placement could read in this folder, sorted.
 
-    Any .pdb counts except the complex PDB and antechamber's sqm.pdb. The guest PDB
+    Any .pdb counts except the complex PDB, the rejected pose <guest>_clash.pdb and
+    antechamber's sqm.pdb. The guest PDB
     (<guest>.pdb) only counts when it is the only candidate: next to another PDB it is
     the output of an earlier (e.g. failed) placement, not the input.
     """

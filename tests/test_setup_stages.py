@@ -6,6 +6,7 @@ from pathlib import Path
 tests_dir = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(tests_dir / "apr_pipeline"))
 from datapoints import (
+    CLASH_PDB,
     COMPLEX_PDB,
     DONE,
     GUEST_FRCMOD,
@@ -50,8 +51,16 @@ class SetupStageTests(unittest.TestCase):
         dp = self.make("iso_00001", "iso_00001.smi", "iso_00001.pdb")
         self.assertEqual(next_stage(dp), "placement")
 
+    def test_clash_pose_is_never_a_placement_input(self):
+        dp = self.make("iso_00001", "iso_00001.smi", GUEST_PDB, CLASH_PDB)   # structure, then a clash
+        self.assertEqual(next_stage(dp), "placement")
+        self.assertEqual(placement_inputs(dp), [dp / GUEST_PDB])
+        dp = self.make("PFBA_m_up", "pfba_m_up.pdb", CLASH_PDB)
+        self.assertEqual(placement_inputs(dp), [dp / "pfba_m_up.pdb"])
+        self.assertIsNone(next_stage(self.make("only_clash", CLASH_PDB)))
+
     def test_failed_placement_still_needs_placement(self):
-        # a clash leaves the rejected guest pose behind, but no complex PDB
+        # folders from before UNL_clash.pdb: a clash left the rejected pose in the guest PDB
         dp = self.make("PFBA_m_up", "pfba_m_up.pdb", GUEST_PDB)
         self.assertEqual(next_stage(dp), "placement")
         self.assertEqual(placement_inputs(dp), [dp / "pfba_m_up.pdb"])

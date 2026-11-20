@@ -44,7 +44,10 @@ the data directory. Data-point ranges accept either `iso_00001-iso_00010` or
 clash reports, loads the configured host PDB once and each failed guest PDB as
 a separate molecule, and highlights the nearest guest atom with a Licorice
 representation.
-Failed guest poses are written to the normal guest PDB (`UNL.pdb` by default).
+Placement writes a rejected guest pose to `UNL_clash.pdb` (`<guest_prefix>_clash.pdb`)
+and leaves `UNL.pdb` and the complex PDB alone, so the input is still found next
+time; a successful placement removes `UNL_clash.pdb`. For folders from before
+this, `--failed-clashes` falls back to `UNL.pdb` when there is no complex PDB.
 Only the host is initially visible; use VMD's molecule list to switch to a
 guest molecule. Re-run setup/placement to regenerate guest poses after changing
 the placement or clash-detection algorithm.

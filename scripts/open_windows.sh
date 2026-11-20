@@ -201,9 +201,13 @@ run_pdb_mode() {
         fi
         for datapoint in "${selected_datapoints[@]}"; do
             report_path="$DATA_DIR/$datapoint/setup_failed.txt"
-            guest_path="$DATA_DIR/$datapoint/$GUEST_PREFIX.pdb"
+            # the rejected pose; folders from before <guest>_clash.pdb existed have it in <guest>.pdb
+            guest_path="$DATA_DIR/$datapoint/${GUEST_PREFIX}_clash.pdb"
+            if [[ ! -s "$guest_path" && ! -s "$DATA_DIR/$datapoint/$COMPLEX_PREFIX.pdb" ]]; then
+                guest_path="$DATA_DIR/$datapoint/$GUEST_PREFIX.pdb"
+            fi
             if [[ ! -s "$report_path" || ! -s "$guest_path" ]]; then
-                echo "Warning: skipping '$datapoint' -- setup failure report or guest PDB is missing" >&2
+                echo "Warning: skipping '$datapoint' -- setup failure report or ${GUEST_PREFIX}_clash.pdb is missing" >&2
                 continue
             fi
             guest_atom_index="$(sed -nE 's/.*guest atom ([0-9]+).*/\1/p' "$report_path" | head -n 1)"
