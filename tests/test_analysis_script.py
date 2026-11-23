@@ -134,6 +134,17 @@ class AnalysisScriptTests(unittest.TestCase):
         self.assertFalse(json.loads((self.data / "todo" / "results.json").read_text())["enhanced"])
         self.assertTrue(self.csv.exists())
 
+    def test_clean_after_analysis_cleans_the_analyzed_point(self):
+        dp = self.point("todo")
+        (dp / "sqm.out").write_text("x\n")
+        (dp / "guest_input.json").write_text("{}\n")
+        code, out = self.analysis("--clean-after-analysis", "todo")
+        self.assertEqual(code, 0, out)
+        self.assertIn("cleanup todo: removed", out)
+        self.assertFalse((dp / "sqm.out").exists())
+        self.assertTrue((dp / "guest_input.json").exists())
+        self.assertFalse((dp / "windows" / WINDOWS[-1] / TRAJECTORY).exists())
+
     def test_list_file(self):
         for name in ("iso_00001", "iso_00002", "iso_00003"):
             self.point(name)

@@ -28,6 +28,13 @@ TRAJECTORY = CFG["analysis"]["trajectory"]
 FAILED_FILE = "setup_failed.txt"
 ANALYSIS_FAILED_FILE = "analysis_failed.txt"
 PLOTS = "plots"                                # analysis plots: <data point>/plots/
+RESULTS = "results.json"
+# plots in the data point folder itself, from before plots/ existed
+LEGACY_PLOT_FILES = ("binding_free_energy.jpg", "convergence_plot.jpg",
+                     "attach_windows_grid.jpg", "pull_window_histograms.jpg")
+# setup leftovers in the data point folder that cleanup removes after a successful analysis:
+# tleap's complex/ build folder and antechamber's scratch files
+SETUP_TRANSIENT = ("complex", "sqm.in", "sqm.out", "sqm.pdb", "ATOMTYPE.INF", "ANTECHAMBER*", "leap.log")
 SETUP_STATES = ("no_windows", "setup_incomplete", "setup_failed")     # setup has to be (re)done
 
 # window folder names: a000 ... (attach) and p000 ... (pull)

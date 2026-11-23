@@ -328,21 +328,28 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   followed by its analysis array. The next batch's simulations wait for the previous batch's analysis
   tasks to end, but still run if an analysis task fails.
   `N=1` keeps the single-batch workflow. All windows belonging to one data point stay in the same batch.
-* `--clean-after-analysis` is opt-in. After a data point analyzes successfully, transient files are
-  removed while preserving its configured guest inputs, complex PDB, SMILES, results JSON, analysis
-  plots, trajectories from `a000`-`a004` and the last attach window (for example `a015`), the
-  topology in `a000`, and `windows/restraints.json`. Other files in window folders are removed,
-  but existing window directories are kept. Log files within a data point are removed, along with
-  other directories left empty by cleanup. Files are deleted only within that data point; the shared
-  configured Slurm logs directory is otherwise untouched. With `--clean-after-analysis` in `all`,
-  a finalizer removes that batch's simulation and analysis array output logs only after those arrays
-  succeed and every batch point is confirmed analyzed. If any array fails or a point remains
+* `--clean-after-analysis` is opt-in. After a data point analyzes successfully, its transient files
+  are removed, with the same rules as `scripts/cleanup.py` (below). With `--clean-after-analysis` in
+  `all`, a finalizer removes that batch's simulation and analysis array output logs only after those
+  arrays succeed and every batch point is confirmed analyzed. If any array fails or a point remains
   incomplete, those logs are retained. Worklists and logs from setup, other batches, or non-batch
-  jobs are not removed. `open_windows.sh` uses the retained `a000` topology when another selected
-  window has no local topology.
-  To clean already-analyzed data points manually, run
-  `python scripts/cleanup.py --data-dir ../data`. It applies the same retention rules and skips
-  points without `results.json`; add data-point names to limit cleanup to selected folders.
+  jobs are not removed.
+* To clean analyzed data points by hand:
+
+  ```
+  python scripts/cleanup.py --dry-run            # what would be removed, per point, with sizes
+  python scripts/cleanup.py --dry-run -v iso_00001   # the same, listing every file
+  python scripts/cleanup.py                      # every point with results.json
+  python scripts/cleanup.py iso_00001-iso_00010  # these;  --list todo.txt  points from a file
+  ```
+
+  Only points with `results.json` are touched. In the data point folder only setup leftovers are
+  removed (`complex/`, `sqm.*`, antechamber scratch files); everything else stays: guest inputs,
+  `guest_input.json`, input PDBs, `plots/`, `results.json` and any file of your own. In `windows/`
+  everything is removed except `restraints.json`, the trajectories of `a000`-`a004` and the last
+  attach window (for example `a015`) and the topology in `a000`; the window folders themselves
+  stay. `open_windows.sh` uses the retained `a000` topology when another selected window has no
+  local topology.
 * Windows simulated before the markers existed: if you know they are complete,
   `for w in data/*/windows/*/; do touch "${w}production2.done"; done` marks them
   (a plain `touch data/*/windows/*/production2.done` does NOT work: the `*` only matches files that already exist).
