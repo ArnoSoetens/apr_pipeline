@@ -11,7 +11,9 @@ each run(dp) refuses it too). A failure is written to the data point's setup_fai
 """
 import argparse
 import importlib
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from apr_config import CFG
@@ -37,19 +39,23 @@ def describe(error):
     return str(error) or type(error).__name__
 
 
-def run_data_points(names, plan, label="setup", data_dir=None):
+def run_data_points(names, plan, label="setup", data_dir=None, prepare=None):
     """Set up each named data point; returns (n_done, n_failed, n_skipped).
 
     plan(dp) returns the stages to run for dp, in order, or a string: why dp is skipped.
+    prepare(dp), if given, runs first for each existing data point (main.py --force deletes there).
     """
     data_dir = Path(data_dir or CFG["directories"]["data"])
     n_done = n_failed = n_skipped = 0
     for i, name in enumerate(names, 1):
         dp = data_dir / name
         print(f"[{i}/{len(names)}] {name}", flush=True)
+        if prepare is not None and dp.is_dir():
+            prepare(dp)
 
         if has_simulation_output(dp):
-            todo = f"has simulation output (windows/*/{TRAJECTORY}); setup never touches it"
+            todo = (f"has simulation output (windows/*/{TRAJECTORY}); setup never touches it "
+                    "(main.py --force redoes it and deletes that output)")
         elif not dp.is_dir():
             todo = f"no such data point folder: {dp}"
         else:
@@ -77,6 +83,35 @@ def run_data_points(names, plan, label="setup", data_dir=None):
 
     print(f"{label} finished: {n_done} done, {n_failed} failed, {n_skipped} skipped", flush=True)
     return n_done, n_failed, n_skipped
+
+
+def remove(paths):
+    """Delete files and folders (a symlink itself, never what it points to)."""
+    for path in paths:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+
+def disk_usage(paths):
+    total = 0
+    for path in paths:
+        if path.is_dir() and not path.is_symlink():
+            total += sum(f.lstat().st_size for f in path.rglob("*") if f.is_file() or f.is_symlink())
+        else:
+            total += path.lstat().st_size
+    return total
+
+
+def confirm(question, assume_yes=False, stdin=None, ask=input):
+    """True when the user agrees. --yes agrees; without a terminal and without --yes: SystemExit."""
+    if assume_yes:
+        return True
+    stdin = stdin or sys.stdin
+    if not stdin.isatty():
+        raise SystemExit("main.py: --force needs a confirmation: run it in a terminal, or add --yes")
+    return ask(f"{question} [y/N] ").strip().lower() in ("y", "yes")
 
 
 def stage_main(stage, argv=None, data_dir=None):

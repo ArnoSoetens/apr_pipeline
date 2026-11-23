@@ -35,6 +35,9 @@ RUN_FAILED_FILE = "run_failed.txt"            # run.sh writes it in a window fol
 IMPLICIT_DIR = "windows_implicit"             # guest-only runs (scripts/run_implicit.py):
 IMPLICIT_ONLY = "implicit_only"               #   <dp>/windows_implicit/implicit_only  free guest in GB
 IMPLICIT_P000 = "implicit_p000"               #   <dp>/windows_implicit/implicit_p000  guest alone in the p000 window
+# analysis plots in the data point folder itself, from before plots/ existed
+LEGACY_PLOT_FILES = ("binding_free_energy.jpg", "convergence_plot.jpg",
+                     "attach_windows_grid.jpg", "pull_window_histograms.jpg")
 # setup leftovers in the data point folder that cleanup removes after a successful analysis:
 # tleap's complex/ build folder and antechamber's scratch files
 SETUP_TRANSIENT = ("complex", "sqm.in", "sqm.out", "sqm.pdb", "ATOMTYPE.INF", "ANTECHAMBER*", "leap.log")
@@ -69,6 +72,27 @@ def placement_inputs(dp):
     if len(candidates) > 1:
         candidates = [p for p in candidates if p.name != GUEST_PDB]
     return candidates
+
+
+def start_stage(dp):
+    """Where setup starts "from the start": structure with a <name>.smi, otherwise placement."""
+    return "structure" if (Path(dp) / f"{Path(dp).name}.smi").is_file() else "placement"
+
+
+def force_plan(dp, from_stage):
+    """What main.py --force deletes before redoing setup from from_stage (existing paths only).
+
+    Always the simulation and analysis output: windows/, complex/, results.json, plots/,
+    analysis_failed.txt and old plots in the folder itself. From parametrize or earlier also the
+    guest-only runs (windows_implicit/), which were built from the old guest parameters.
+    Never inputs (.smi, input PDBs, guest_input.json) or anything else; the setup stages
+    overwrite their own outputs (<guest>.pdb, <complex>.pdb, .mol2, .frcmod) themselves.
+    """
+    dp = Path(dp)
+    names = ["windows", "complex", RESULTS, PLOTS, ANALYSIS_FAILED_FILE, *LEGACY_PLOT_FILES]
+    if STAGES.index(from_stage) <= STAGES.index("parametrize"):
+        names.append(IMPLICIT_DIR)
+    return [dp / name for name in names if (dp / name).exists() or (dp / name).is_symlink()]
 
 
 def has_simulation_output(dp):

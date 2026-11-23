@@ -295,6 +295,28 @@ class RunEndToEndTests(unittest.TestCase):
                 self.assertTrue((folder / DONE_MARKER).is_file(), run)
                 self.assertIn("Final Performance Info", (folder / "production.out").read_text())
 
+            # --force: new walls/windows -> redo apr_setup: trajectories gone, guest-only runs kept
+            def main(*args):
+                result = subprocess.run([sys.executable, str(ROOT / "scripts" / "main.py"), *args], env=env,
+                                        capture_output=True, text=True, timeout=900, stdin=subprocess.DEVNULL)
+                return result.returncode, result.stdout + result.stderr
+
+            code, out = main("anion")
+            self.assertIn("SKIPPED: has simulation output", out)
+            code, out = main("--force", "--from", "apr_setup", "--yes", "anion")
+            self.assertIn("--force deletes the simulation output of 1 data point(s): 2 trajectories", out)
+            self.assertIn("1 done, 0 failed", out)
+            self.assertFalse(list((dp / "windows").glob(f"*/{TRAJECTORY}")))
+            self.assertTrue((dp / "windows" / "a000" / "BCD-UNL-dum.prmtop").is_file())
+            self.assertTrue((dp / "windows_implicit" / "implicit_p000" / DONE_MARKER).is_file())
+
+            # new charge -> redo parametrize: the guest-only runs go too
+            code, out = main("--force", "--from", "parametrize", "--yes", "anion")
+            self.assertIn("guest-only runs of 1", out)
+            self.assertIn("1 done, 0 failed", out)
+            self.assertFalse((dp / "windows_implicit").exists())
+            self.assertTrue((dp / "UNL.mol2").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

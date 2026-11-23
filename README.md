@@ -3,22 +3,27 @@
 ```
 project/
 ├── apr_pipeline/          python modules (apr_config.py reads data/inputs/config.toml;
-│                          datapoints.py knows the state of each data point)
+│                          datapoints.py knows the state of each data point; the setup stages
+│                          structure.py, placement.py, parametrize.py, apr_setup.py also run on
+│                          their own: python apr_pipeline/placement.py [names])
 ├── scripts/
-│   ├── main.py            setup: isomers -> structure -> placement -> parametrize -> APR windows
-│   │                      (serial: python main.py;  or per data point name, as array tasks do)
+│   ├── main.py            setup: structure -> placement -> parametrize -> APR windows, each point from
+│   │                      the stage it needs (--from STAGE; --force redoes simulated points)
 │   ├── analysis.py        free energies -> results.json, plots/, data/inputs/results.csv
 │   ├── run.py             runs APR windows: picks them, writes data/inputs/*.in + run.env, starts run.sh
 │   ├── run.sh             the worker: pmemd on the given window folders, N at a time (plain bash)
 │   ├── job_gpu.slurm      one GPU job: main.py then run.py --cpus 1 (sbatch scripts/job_gpu.slurm [names])
 │   ├── run_implicit.py    guest-only GB runs: --implicit-only / --p000 -> <dp>/windows_implicit/
 │   ├── open_windows.sh    cpptraj + VMD:  ./open_windows.sh iso_00001 a000-a005
-│   ├── submit_arrays.py   slurm arrays: status | sim | analysis | all  (--submit to really submit)
+│   ├── submit_arrays.py   slurm arrays: status | setup | sim | analysis | all | implicit  (--submit to submit)
 │   ├── job_array.slurm    shared by the arrays: modules, conda, amber, then array_task.sh
 │   ├── array_task.sh      what one array task does (its slice of the worklist)
 │   ├── collect_results.py builds results.csv from all results.json
+│   ├── cleanup.py         removes transient files of analyzed points (--dry-run first)
+│   ├── cleanup_batch_logs.py   removes a finished batch's slurm logs (started by submit_arrays)
+│   ├── angle_histogram.py restraint-angle histograms per window
 │   ├── config_env.py      bash cannot read TOML: prints `export` lines for array_task.sh / open_windows.sh
-│   └── templates/         the three Amber .in files with ${placeholders}
+│   └── templates/         the Amber .in templates with ${placeholders} (APR windows and guest-only)
 └── data/                  the project: everything a campaign needs and produces
     ├── inputs/
     │   ├── config.toml    <- the one file you edit (tracked by git)
@@ -145,7 +150,8 @@ SMILES, from any guest PDB, from a placed guest, or from all four prepared
 files. `--from STAGE` starts there regardless of what exists. A data point that
 fails gets `setup_failed.txt` (`<stage>: <reason>`) and the others go on.
 A data point with simulation output (any `windows/*/production.nc`) is never
-touched by setup, not even with `--from` or by name.
+touched by setup, not even with `--from` or by name; only `main.py --force` redoes it
+(see "Changing settings and redoing setup").
 
 Choosing data points works the same in `main.py` and every stage script:
 
@@ -265,6 +271,35 @@ pipeline. The `setup` command then submits the usual per-data-point setup jobs.
 * A data point that fails gets `setup_failed.txt` with the stage and reason (shown by `status`); success removes it.
   The `setup` array leaves failed data points out unless you pass `--retry-failed`.
 * Wait for the setup array to finish before `sim`: the simulation list is made from the windows setup creates.
+
+## Changing settings and redoing setup
+
+Setup never touches a data point with simulation output, so after changing a setting, redo the
+affected points with `--force`, starting at the earliest stage the setting changes:
+
+| you change | redo with |
+|---|---|
+| walls, window list (`attach_string`, pull distances), restraints, dummy atoms, host anchors | `main.py --force --from apr_setup NAMES` |
+| `net_charge` (in `guest_input.json` or the config), charge method, atom types | `main.py --force --from parametrize NAMES` |
+| placement settings, anchors in `guest_input.json`, the host | `main.py --force --from placement NAMES` |
+| structure settings | `main.py --force NAMES` (from the start: structure with a `.smi`, otherwise placement) |
+
+`--force` first shows what it will delete and asks:
+
+```
+--force deletes the simulation output of 3 data point(s): 135 trajectories (2.1 GB), results of 2, guest-only runs of 0:
+  iso_00001, iso_00002, iso_00003
+Cancel running or queued Slurm jobs for these points first.
+Continue? [y/N]
+```
+
+Only `y`/`yes` continues. Without a terminal (Slurm, a pipe) it refuses unless you add `--yes`.
+For each point, just before its setup, it deletes `windows/`, `complex/`, `results.json`,
+`plots/`, `analysis_failed.txt` and old plots in the folder itself, and from `parametrize` or
+earlier also `windows_implicit/` (built from the old guest parameters). Inputs (`.smi`, input
+PDBs, `guest_input.json`) and your own files are never deleted; the stages overwrite their own
+outputs. `results.csv` is rebuilt afterwards. Then run the windows again (`run.py`, or
+`submit_arrays.py sim --submit`). The array tasks never use `--force`.
 
 ## Running the APR windows
 
