@@ -4,6 +4,8 @@
                                             (folders are created from the configured SMILES list only
                                             when there are none)
     python main.py iso_00001 ...            just these data points (this is what the slurm array tasks do)
+    python main.py iso_00001-iso_00010      a range of data points
+    python main.py --list todo.txt          the data points in a file (one or more per line, # comments)
     python main.py --from placement [...]   redo placement and everything after it, whatever exists
 
 Stages, in order: structure -> placement -> parametrize -> apr_setup. Each data point starts at the
@@ -22,10 +24,10 @@ script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))   # apr_pipeline/ sits next to scripts/
 
 from datapoints import DONE, STAGES, ensure_data_directories, next_stage
+from selection import add_selection_args, selected
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("names", nargs="*", metavar="NAME",
-                    help="data points to set up (default: all that still need it)")
+add_selection_args(parser)
 parser.add_argument("--from", dest="from_stage", metavar="STAGE",
                     choices=STAGES,
                     help="start every selected data point at this stage, even if its outputs exist "
@@ -45,12 +47,14 @@ def plan(dp):
     return STAGES[STAGES.index(start):]
 
 
-if args.names:
-    names = args.names
-else:
-    try:
-        names = [dp.name for dp in ensure_data_directories()]
-    except FileNotFoundError as e:
-        sys.exit(f"main.py: {e}")
+def every_data_point():
+    """Every folder a stage recognizes; created from the SMILES list when there are none."""
+    return [dp.name for dp in ensure_data_directories()]
+
+
+try:
+    names = selected(args, todo=every_data_point)
+except (FileNotFoundError, ValueError) as e:
+    sys.exit(f"main.py: {e}")
 
 run_data_points(names, plan)

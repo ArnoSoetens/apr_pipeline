@@ -2,6 +2,7 @@
 
     python apr_pipeline/<stage>.py              every data point whose next stage is <stage>
     python apr_pipeline/<stage>.py NAME ...     <stage> on these data points, whatever exists
+                                                (also ranges and --list FILE, see selection.py)
 
 Each stage module (structure, placement, parametrize, apr_setup) has run(dp) for one data point;
 the module name is the stage name. A data point with simulation output is always skipped (and
@@ -24,6 +25,7 @@ from datapoints import (
     next_stage,
 )
 from guest_input import ensure_guest_input
+from selection import add_selection_args, selected
 
 
 def describe(error):
@@ -85,19 +87,25 @@ def stage_main(stage, argv=None, data_dir=None):
                     f"next stage is {stage} (its earlier outputs exist, its own do not). With names: "
                     f"{stage} on those, even if its output exists"
                     + (f" (the later stages, {', '.join(later)}, are not redone)." if later else ".")
-                    + " Data points with simulation output are always skipped.")
-    parser.add_argument("names", nargs="*", metavar="NAME", help="data points (folder names)")
+                    + " Data points with simulation output are always skipped. Names can be "
+                    "ranges (iso_00001-iso_00010); --list FILE reads more from a file.")
+    add_selection_args(parser)
     args = parser.parse_args(argv)
     data_dir = Path(data_dir or CFG["directories"]["data"])
 
-    if args.names:
-        names = args.names
-    else:
+    def needing_stage():
         names = sorted(dp.name for dp in data_dir.iterdir()
                        if dp.is_dir() and next_stage(dp) == stage) if data_dir.is_dir() else []
         if not names:
             print(f"no data point in {data_dir} needs {stage}", flush=True)
-            return 0
+        return names
+
+    try:
+        names = selected(args, todo=needing_stage, data_dir=data_dir)
+    except (FileNotFoundError, ValueError) as e:
+        parser.error(str(e))
+    if not names:
+        return 0
 
     def plan(dp):
         before = next_stage(dp)

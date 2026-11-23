@@ -62,6 +62,28 @@ class StageScriptTests(unittest.TestCase):
         self.assertIn("main.py built --from structure", out)
         self.assertNotEqual((built / "UNL.pdb").read_text(), "old\n")
 
+    def test_range_and_list_file(self):
+        for name in ("iso_00001", "iso_00002", "iso_00004", "iso_00005"):
+            self.smiles_point(name)
+        todo = self.root / "todo.txt"
+        todo.write_text("# just these two\niso_00004\n\niso_00005  # and this one\n")
+
+        code, out = self.structure("iso_00001-iso_00003")
+        self.assertEqual(code, 0, out)
+        self.assertIn("no folder for 1 of 3 (iso_00003)", out)
+        self.assertIn("structure finished: 2 done, 0 failed, 0 skipped", out)
+
+        code, out = self.structure("--list", str(todo))
+        self.assertEqual(code, 0, out)
+        self.assertIn("[1/2] iso_00004", out)
+        self.assertIn("[2/2] iso_00005", out)
+        for name in ("iso_00001", "iso_00002", "iso_00004", "iso_00005"):
+            self.assertTrue((self.data / name / "UNL.pdb").is_file())
+
+        code, out = self.structure("iso_00001/a000")
+        self.assertEqual(code, 2)
+        self.assertIn("whole data points", out)
+
     def test_a_failure_is_recorded_and_gives_exit_code_1(self):
         bad = self.smiles_point("bad", "C((")
         self.smiles_point("good")

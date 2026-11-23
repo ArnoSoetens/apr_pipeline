@@ -156,6 +156,20 @@ fails gets `setup_failed.txt` (`<stage>: <reason>`) and the others go on.
 A data point with simulation output (any `windows/*/production.nc`) is never
 touched by setup, not even with `--from` or by name.
 
+Choosing data points works the same in `main.py` and every stage script:
+
+```
+python scripts/main.py                          # every data point that needs it
+python scripts/main.py iso_00001 PFBA_m_down    # these
+python scripts/main.py iso_00001-iso_00010      # a range (only numbers that have a folder)
+python scripts/main.py --list todo.txt          # names/ranges from a file, one or more per line
+```
+
+In a `--list` file, blank lines and `# comments` are ignored, and entries can be
+mixed with names on the command line. A range needs the same prefix and the
+same number of digits on both ends; numbers without a folder are listed in a
+note.
+
 Each stage can also be run on its own, with the same logging and
 `setup_failed.txt` as `main.py`:
 
