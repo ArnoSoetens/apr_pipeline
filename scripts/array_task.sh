@@ -82,10 +82,11 @@ case "$STAGE" in
             fi
         done
         if [ "${#READY[@]}" -gt 0 ]; then
+            # --no-collect: the collect job builds results.csv once all analysis tasks have ended
             if [[ "$CLEAN_AFTER_ANALYSIS" == "--clean-after-analysis" ]]; then
-                python "$SCRIPT_DIR/analysis.py" --clean-after-analysis "${READY[@]}"
+                python "$SCRIPT_DIR/analysis.py" --no-collect --clean-after-analysis "${READY[@]}"
             else
-                python "$SCRIPT_DIR/analysis.py" "${READY[@]}"
+                python "$SCRIPT_DIR/analysis.py" --no-collect "${READY[@]}"
             fi
         fi
         ;;

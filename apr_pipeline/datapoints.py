@@ -26,6 +26,8 @@ DATA = Path(CFG["directories"]["data"])
 TOPOLOGY = f'{CFG["naming"]["complex_prefix"]}-dum.prmtop'
 TRAJECTORY = CFG["analysis"]["trajectory"]
 FAILED_FILE = "setup_failed.txt"
+ANALYSIS_FAILED_FILE = "analysis_failed.txt"
+PLOTS = "plots"                                # analysis plots: <data point>/plots/
 SETUP_STATES = ("no_windows", "setup_incomplete", "setup_failed")     # setup has to be (re)done
 
 # window folder names: a000 ... (attach) and p000 ... (pull)
@@ -163,14 +165,14 @@ def has_complete_run(dp):
     )
 
 
-def mark_failed(dp, reason):
-    (Path(dp) / FAILED_FILE).write_text(f"{time.strftime('%F %T')}\n{reason}\n")
+def mark_failed(dp, reason, file=FAILED_FILE):
+    (Path(dp) / file).write_text(f"{time.strftime('%F %T')}\n{reason}\n")
 
 
-def clear_failed(dp):
-    (Path(dp) / FAILED_FILE).unlink(missing_ok=True)
+def clear_failed(dp, file=FAILED_FILE):
+    (Path(dp) / file).unlink(missing_ok=True)
 
 
-def failure_reason(dp):
-    lines = (Path(dp) / FAILED_FILE).read_text().splitlines()
+def failure_reason(dp, file=FAILED_FILE):
+    lines = (Path(dp) / file).read_text().splitlines()
     return lines[1][:100] if len(lines) > 1 else ""

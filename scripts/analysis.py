@@ -1,75 +1,112 @@
+"""Analyze simulated data points: binding free energy -> <dp>/results.json, plots in <dp>/plots/.
+
+    python analysis.py                         every data point that is fully simulated and not analyzed yet
+    python analysis.py iso_00001 ...           these data points, also when they were analyzed before
+    python analysis.py iso_00001-iso_00010     a range;  --list todo.txt  the data points in a file
+    python analysis.py --enhanced ...          also the convergence plot, the attach-window grid, the
+                                               pull-window histograms and extra metadata in results.json
+
+A data point that fails gets analysis_failed.txt (date and reason) and the loop goes on; a
+successful analysis removes it. At the end results.csv is rebuilt from every results.json
+(analysis.results_csv in config.toml); --no-collect leaves it alone (the slurm array tasks use
+this, a separate job collects afterwards). The exit code is 0 even when a data point failed:
+see the summary line and the analysis_failed.txt files.
+"""
 import argparse
-import csv
-import os
 import sys
+from pathlib import Path
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-
-# bootstrap: just enough to import apr_config (apr_pipeline/ sits next to scripts/)
-sys.path.insert(0, os.path.abspath(os.path.join(script_dir, "..", "apr_pipeline")))
+script_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))   # apr_pipeline/ sits next to scripts/
+sys.path.insert(0, str(script_dir))
 
 from apr_config import CFG
+from datapoints import (
+    ANALYSIS_FAILED_FILE,
+    TOPOLOGY,
+    TRAJECTORY,
+    WINDOWS,
+    all_data_points,
+    clear_failed,
+    mark_failed,
+    scan,
+)
+from selection import add_selection_args, selected
 
-data_dir = CFG["directories"]["data"]
-sys.path.insert(0, CFG["directories"]["pipeline"])
-
-from apr_analysis import run
-from datapoints import has_complete_run
-
-parser = argparse.ArgumentParser(description="Analyze completed APR data points.")
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+add_selection_args(parser)
+parser.add_argument("--enhanced", action="store_true",
+                    help="also write the convergence plot, attach-window grid, pull-window histograms "
+                         "and extra metadata")
 parser.add_argument("--clean-after-analysis", action="store_true",
                     help="remove transient files after each successful data-point analysis")
-parser.add_argument("names", nargs="*", metavar="NAME")
+parser.add_argument("--no-collect", action="store_true",
+                    help="do not rebuild results.csv at the end")
 args = parser.parse_args()
 
-if args.clean_after_analysis:
-    from cleanup import cleanup_data_point
 
-# Data points to analyze: the names given as arguments (e.g. by a slurm array task),
-# otherwise every folder in data/. With arguments results.csv is not written here:
-# collect_results.py builds it afterwards from all results.json files.
-names = args.names or sorted(os.listdir(data_dir))
+def needing_analysis():
+    names = [dp.name for dp in all_data_points() if scan(dp)[0] == "needs_analysis"]
+    if not names:
+        print("no data point needs analysis", flush=True)
+    return names
 
-summary = []
-failed = False
-for name in names:
-    data_point_dir = os.path.join(data_dir, name)
 
-    if not os.path.isdir(os.path.join(data_point_dir, "windows")):
+def why_not(dp):
+    """Why dp cannot be analyzed, or None when it can."""
+    windows = dp / "windows"
+    if not dp.is_dir():
+        return f"no such data point folder: {dp}"
+    if (dp / "results.json").is_file() and not all((windows / w / TOPOLOGY).is_file() for w in WINDOWS):
+        return "cleaned up after analysis: its trajectories were removed"
+    missing = [w for w in WINDOWS if not (windows / w / TRAJECTORY).is_file()]
+    if missing:
+        return (f"not all windows have {TRAJECTORY} "
+                f"({len(missing)} missing, e.g. {', '.join(missing[:3])})")
+    return None
+
+
+try:
+    names = selected(args, todo=needing_analysis)
+except (FileNotFoundError, ValueError) as e:
+    sys.exit(f"analysis.py: {e}")
+
+if names:
+    import apr_analysis                       # pAPRika/JAX: only imported when there is work
+    if args.clean_after_analysis:
+        from cleanup import cleanup_data_point
+
+data_dir = Path(CFG["directories"]["data"])
+n_done = n_failed = n_skipped = 0
+for i, name in enumerate(names, 1):
+    dp = data_dir / name
+    print(f"[{i}/{len(names)}] {name}", flush=True)
+    reason = why_not(dp)
+    if reason:
+        print(name, f"SKIPPED: {reason}", flush=True)
+        n_skipped += 1
         continue
-    if not has_complete_run(data_point_dir):
-        print(f"SKIP {name}: not all windows have {CFG['analysis']['trajectory']}")
-        continue
-
-    # the real SMILES, read from the .smi file in this folder
-    smi_file = os.path.join(data_point_dir, f"{name}.smi")
-    if os.path.exists(smi_file):
-        with open(smi_file) as f:
-            smiles = f.read().strip()
-    else:
-        smiles = ""          # no .smi file found, leave the column empty
 
     try:
-        out = run(data_point_dir)
+        out = apr_analysis.run(dp, enhanced=args.enhanced)
     except Exception as e:
-        print(f"analysis {name} FAILED: {e}")
-        failed = True
+        reason = str(e) or type(e).__name__
+        print(name, f"FAILED: {reason}", flush=True)
+        mark_failed(dp, reason, file=ANALYSIS_FAILED_FILE)
+        n_failed += 1
         continue
+    clear_failed(dp, file=ANALYSIS_FAILED_FILE)
+    n_done += 1
+    print(f"{name} done: {out['dG_bind']:.2f} +/- {out['dG_sem']:.2f} kcal/mol", flush=True)
 
-    summary.append([name, smiles, out["dG_bind"], out["dG_sem"]])
-    print(f"analysis {name} done: {out['dG_bind']:.2f} +/- {out['dG_sem']:.2f} kcal/mol")
     if args.clean_after_analysis:
         try:
-            cleanup_data_point(data_point_dir)
+            cleanup_data_point(dp)
         except Exception as e:
-            print(f"cleanup {name} FAILED: {e}")
-            failed = True
+            print(f"cleanup {name} FAILED: {e}", flush=True)
 
-if not args.names:
-    with open(CFG["analysis"]["results_csv"], "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["smiles_folder", "smiles", "dG_bind_kcal_per_mol", "sem"])
-        writer.writerows(summary)
+print(f"analysis finished: {n_done} done, {n_failed} failed, {n_skipped} skipped", flush=True)
 
-if failed:
-    raise SystemExit("One or more data-point analyses or cleanups failed.")
+if not args.no_collect:
+    import collect_results
+    collect_results.main()

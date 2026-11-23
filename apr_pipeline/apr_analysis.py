@@ -14,14 +14,13 @@ from paprika.io import load_restraints, load_trajectory, read_restraint_data
 from paprika.restraints import create_window_list
 
 from apr_config import CFG, get_attach_fractions, get_pull_distances, get_method
+from datapoints import PLOTS
 
 # --- values from config.toml ---
 COMPLEX = CFG["naming"]["complex_prefix"]
 INITIAL_DISTANCE = CFG["apr"]["initial_distance"]
 METHOD = get_method()                     # "ti-block" or "mbar-autoc"
 METHODS = ("ti-block", "mbar-autoc")
-ENHANCED = CFG["analysis"]["enhanced"]
-CONVERGENCE_PLOT = CFG["analysis"]["convergence_plot"]
 BOOT_CYCLES = CFG["analysis"]["bootstrap_cycles"]
 TRAJECTORY = CFG["analysis"]["trajectory"]
 DISTANCE_THRESHOLD = 7.0
@@ -329,9 +328,13 @@ def convergence_plot(res, out_path):
 
 
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
-                          complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=ENHANCED,
+                          complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=False,
                           convergence_path=None):
-    """Returns (results dict, simulation_data). dG values in kcal/mol."""
+    """Returns (results dict, simulation_data). dG values in kcal/mol.
+
+    The free energy at several fractions of the trajectory (CONVERGENCE_FRACTIONS) is only
+    computed for the convergence plot (convergence_path); otherwise just the full data set.
+    """
 
     attach_fractions = get_attach_fractions()
     initial_distance = INITIAL_DISTANCE
@@ -346,7 +349,7 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     fe.restraint_list = guest_restraints
     fe.collect_data()
     fe.methods = list(METHODS)
-    fe.fractions = CONVERGENCE_FRACTIONS.tolist()
+    fe.fractions = CONVERGENCE_FRACTIONS.tolist() if convergence_path else [1.0]
     fe.ti_matrix = "full"
     fe.boot_cycles = boot_cycles
     fe.compute_free_energy()
@@ -429,10 +432,14 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     return out, sim_data
 
 
-def run(dp, complex_prefix=COMPLEX):
+def run(dp, complex_prefix=COMPLEX, enhanced=False):
+    """Analyze one fully simulated data point: <dp>/results.json and plots in <dp>/plots/.
+
+    Always binding_free_energy.jpg; enhanced=True also the convergence plot, the attach-window
+    grid, the pull-window histograms and extra metadata in results.json.
+    """
     dp = Path(dp)
     windows = dp / "windows"
-    print(windows)
 
     # every window folder must have finished its production run
     missing = [w.name for w in sorted(windows.iterdir())
@@ -440,16 +447,16 @@ def run(dp, complex_prefix=COMPLEX):
     if missing:
         raise FileNotFoundError(f"{len(missing)} window(s) without {TRAJECTORY}, e.g. {missing[:3]}")
 
-    results, sim_data = calculate_free_energy(windows, plot_path=dp / "binding_free_energy.jpg",
-                                              grid_path=(dp / "attach_windows_grid.jpg") if ENHANCED else None,
-                                              title_name=dp.name, complex_prefix=complex_prefix,
-                                              enhanced=ENHANCED,
-                                              convergence_path=(
-                                                  dp / "convergence_plot.jpg"
-                                                  if CONVERGENCE_PLOT
-                                                  else None
-                                              ))
-    if ENHANCED:
-        pull_window_histograms(sim_data, dp / "pull_window_histograms.jpg")
+    plots = dp / PLOTS
+    plots.mkdir(exist_ok=True)
+    results, sim_data = calculate_free_energy(
+        windows,
+        plot_path=plots / "binding_free_energy.jpg",
+        grid_path=(plots / "attach_windows_grid.jpg") if enhanced else None,
+        title_name=dp.name, complex_prefix=complex_prefix, enhanced=enhanced,
+        convergence_path=(plots / "convergence_plot.jpg") if enhanced else None,
+    )
+    if enhanced:
+        pull_window_histograms(sim_data, plots / "pull_window_histograms.jpg")
     (dp / "results.json").write_text(json.dumps(results, indent=2))
-    return {"dG_bind": results["dG_bind"], "dG_sem": results["dG_sem"]}
+    return results

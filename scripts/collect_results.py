@@ -44,6 +44,7 @@ def collect_result_rows(data_dir):
 
 def main():
     rows, missing = collect_result_rows(CFG["directories"]["data"])
+    Path(CFG["analysis"]["results_csv"]).parent.mkdir(parents=True, exist_ok=True)
     with open(CFG["analysis"]["results_csv"], "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["smiles_folder", "smiles", "dG_bind_kcal_per_mol", "sem"])

@@ -170,8 +170,12 @@ class CleanupTests(unittest.TestCase):
                 data_point / "pull_window_histograms.jpg",
                 data_point / "attach_windows_grid.jpg",
                 data_point / "convergence_plot.jpg",
+                data_point / "plots" / "binding_free_energy.jpg",
+                data_point / "plots" / "convergence_plot.jpg",
+                data_point / "analysis_failed.txt",
             ]
             for path in retained_root:
+                path.parent.mkdir(exist_ok=True)
                 path.write_text("keep")
             transient_root = data_point / "temporary.log"
             transient_root.write_text("remove")

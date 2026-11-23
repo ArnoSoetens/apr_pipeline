@@ -8,7 +8,7 @@ script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))
 
 from apr_config import CFG
-from datapoints import WINDOWS
+from datapoints import ANALYSIS_FAILED_FILE, PLOTS, WINDOWS
 
 
 PLOT_FILES = {
@@ -36,7 +36,8 @@ def cleanup_data_point(data_point, data_dir=None):
         f"{naming['complex_prefix']}.pdb",
         f"{data_point.name}.smi",
         "results.json",
-        *PLOT_FILES,
+        ANALYSIS_FAILED_FILE,
+        *PLOT_FILES,                       # plots of points analyzed before plots/ existed
     })
     last_attach_window = next(
         window for window in reversed(WINDOWS) if window.startswith("a")
@@ -54,7 +55,7 @@ def cleanup_data_point(data_point, data_dir=None):
         for filename in filenames:
             path = Path(root) / filename
             relative = path.relative_to(data_point)
-            keep = relative.as_posix() in retained_root_files
+            keep = relative.as_posix() in retained_root_files or relative.parts[0] == PLOTS
 
             if relative == Path("windows/restraints.json"):
                 keep = True

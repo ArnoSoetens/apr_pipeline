@@ -111,13 +111,11 @@ rk3 = 100.0               # right parabolic force constant (kcal/mol/A^2)
 # plus rim_offset and parabolic_width.
 
 # ---------------------------------------------------------------------------
-[analysis]
-enhanced         = true          # true: also write histogram plots and coordinate metadata
+[analysis]                   # extra plots: scripts/analysis.py --enhanced
 method           = "ti"           # primary plot/overall result; both TI and MBAR are analyzed
-convergence_plot = true           # write the free-energy convergence plot
 bootstrap_cycles = 1000
 trajectory       = "production.nc"   # file read from every window
-results_csv      = "results.csv"
+results_csv      = "inputs/results.csv"   # relative to directories.data (so data/ holds everything)
 
 # ---------------------------------------------------------------------------
 [run]

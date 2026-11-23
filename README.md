@@ -8,7 +8,7 @@ project/
 ├── scripts/
 │   ├── main.py            setup: isomers -> structure -> placement -> parametrize -> APR windows
 │   │                      (serial: python main.py;  or per data point name, as array tasks do)
-│   ├── analysis.py        free energies -> results.csv
+│   ├── analysis.py        free energies -> results.json, plots/, data/inputs/results.csv
 │   ├── run.sh             runs all windows (pmemd choice + .in values come from config.toml)
 │   ├── open_windows.sh    cpptraj + VMD:  ./open_windows.sh iso_00001 a000-a005
 │   ├── job1.slurm / job1_gpu.slurm      single jobs (one node, all data points)
@@ -351,6 +351,35 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
 
 ## Analysis results and diagnostics
 
+```
+python scripts/analysis.py                      # every fully simulated point without results.json
+python scripts/analysis.py iso_00001 PFBA_m_up  # these (again, if they were analyzed before)
+python scripts/analysis.py iso_00001-iso_00010  # a range;  --list todo.txt reads names from a file
+python scripts/analysis.py --enhanced ...       # also the convergence plot, attach grid, pull histograms
+```
+
+Each data point gets `results.json` and `plots/binding_free_energy.jpg`. With
+`--enhanced` also `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg`,
+`plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
+(`method`, `attach_fractions`, `pull_distances`). Without `--enhanced` the free
+energy is only computed for the full trajectories, not for the ten fractions
+the convergence plot needs, so the analysis is faster. The calculation is the
+same: MBAR, the reference-state work and the wall/threshold diagnostics come out
+identical. The TI-block values (and so `dG_bind`/`dG_sem` with
+`method = "ti"`) are bootstrap estimates, which differ by a few hundredths of a
+kcal/mol between any two runs, with or without `--enhanced`.
+
+A named point that is not fully simulated, or that was cleaned up after an
+earlier analysis (trajectories removed), is skipped with the reason. A point
+whose analysis fails gets `analysis_failed.txt` (date and reason) and the loop
+goes on with the next one; a later successful analysis removes the file. The
+exit code stays 0, so read the summary line. At the end `results.csv` is
+rebuilt from every `results.json` in the data folder, including cleaned-up
+points: `data/inputs/results.csv` by default (`analysis.results_csv`, relative
+to the data folder). `--no-collect` skips that (the Slurm analysis tasks use it;
+a separate job collects at the end). `--clean-after-analysis` removes transient
+files after each successful analysis.
+
 Every analysis run computes both estimators. `results.json` always contains
 `phases.attach` and `phases.pull`. Each phase contains one `ti-block` and one
 `mbar-autoc` result, each with a single total free-energy estimate (`fe`) and
@@ -362,15 +391,13 @@ The top-level `dG_bind` and `dG_sem` remain the values from the configured
 meaning. The configured method's plot profile is still used internally to draw
 `binding_free_energy.jpg`, but its per-window values are not repeated in JSON.
 
-Every data point also gets a `convergence_plot.jpg`, with separate attach and
+With `--enhanced`, a data point also gets `plots/convergence_plot.jpg`, with separate attach and
 pull panels. Each panel shows the TI and MBAR phase free-energy estimates at
 10%, 20%, ..., 100% of each window's trajectory frames, with Paprika's
 fraction-specific SEM as error bars. Each fraction uses the first indicated
 portion of the available frames in every window. This lets you see whether the
 estimate settles toward its full-trajectory value; it is a diagnostic, not a
-proof that the simulation has sampled all relevant states. Set
-`analysis.convergence_plot = false` in `config.toml` to skip creating this plot;
-it defaults to `true`.
+proof that the simulation has sampled all relevant states.
 
 `attach_distance_outside_threshold` contains the fraction and percent of
 attachment distance samples satisfying
@@ -401,9 +428,6 @@ not summed across separate simulations. Mean potential energy is a restraint
 energy statistic, not work or a binding free-energy contribution. No
 `distance_wall` section is added when no such restraint is present.
 
-`analysis.enhanced` continues to control the supplementary histogram plots and
-coordinate metadata in `results.json`. The convergence plot and phase estimates
-are generated regardless of that setting.
 
 ## Restraint-angle histograms
 
