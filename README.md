@@ -11,6 +11,7 @@ project/
 │   ├── run.py             runs APR windows: picks them, writes data/inputs/*.in + run.env, starts run.sh
 │   ├── run.sh             the worker: pmemd on the given window folders, N at a time (plain bash)
 │   ├── job_gpu.slurm      one GPU job: main.py then run.py --cpus 1 (sbatch scripts/job_gpu.slurm [names])
+│   ├── run_implicit.py    guest-only GB runs: --implicit-only / --p000 -> <dp>/windows_implicit/
 │   ├── open_windows.sh    cpptraj + VMD:  ./open_windows.sh iso_00001 a000-a005
 │   ├── submit_arrays.py   slurm arrays: status | sim | analysis | all  (--submit to really submit)
 │   ├── job_array.slurm    shared by the arrays: modules, conda, amber, then array_task.sh
@@ -67,59 +68,36 @@ the placement or clash-detection algorithm.
 
 ## Guest-only implicit-solvent simulation
 
-To simulate a guest separately from the host, use a guest-only PDB and its
-parameterized MOL2:
+Two guest-only GB runs per data point, next to the APR windows:
 
 ```sh
-python scripts/simulate_guest.py guest.pdb guest.mol2
-python scripts/simulate_guest.py guest.pdb guest.mol2 \
-  --frcmod guest.frcmod --output-dir guest_run
+python scripts/run_implicit.py --implicit-only              # the free guest, every parametrized point
+python scripts/run_implicit.py --p000 iso_00001 iso_00002   # the guest alone in the p000 window
+python scripts/run_implicit.py --implicit-only --p000 ...   # both
+python scripts/run_implicit.py ... --list todo.txt          # points from a file (also ranges)
+python scripts/run_implicit.py ... --cpus 4                 # 4 data points at a time (default 1)
+python scripts/run_implicit.py ... --clean                  # keep only .prmtop, production.nc, done marker
+python scripts/run_implicit.py ... --dry-run                # only list what would run
 ```
 
-The script builds an Amber topology with LEaP and runs minimization,
-equilibration, and production using the force field, GB model, temperature,
-timestep, thermostat, and run lengths configured in `data/inputs/config.toml`. If
-`--frcmod` is omitted, `parmchk2` generates one from the MOL2. The PDB must
-contain one guest residue whose residue name and atom names match the MOL2;
-the MOL2 must already contain the desired GAFF atom types and partial charges.
+| run | folder | what |
+|---|---|---|
+| `--implicit-only` | `<dp>/windows_implicit/implicit_only/` | the free, unrestrained guest: tleap (`guest.prmtop`), minimize, equilibrate, production with `data/inputs/implicit_only/*.in` (production continues equilibration with its velocities) |
+| `--p000` | `<dp>/windows_implicit/implicit_p000/` | one host-free APR p000 window: the guest plus DM1/DM2/DM3, aligned and restrained with the guest's APR restraints at p000 (`disang.rest`, `restraints.json`), minimize, equilibrate, production with the APR window `.in` files in `data/inputs/` |
 
-This is **GB implicit solvent**, not a periodic box of explicit water. The
-simulation is unrestrained and writes its topology, input files, logs, restart
-files, and trajectories to the output directory (by default
-`<PDB-stem>_implicit`). AmberTools (`parmchk2`, `tleap`) and the configured
-Amber `pmemd` executable must be available in the environment.
+A point needs its `UNL.pdb`, `UNL.mol2` and `UNL.frcmod` (after parametrize); without them it
+is skipped with the reason. The p000 restraints use the G1/G2 anchors from `guest_input.json`,
+the same atoms as the complex (or the chain ends, lower one first, while that is empty).
+The pmemd command is `run.pmemd` from the config. A run that finishes gets the done marker
+and is never redone; an unfinished one starts again from scratch. A failed run gets
+`run_failed.txt` (step, exit code, last line of its output) and the others go on; the exit
+code is 1 if a run failed. Host-anchor and host-conformational restraints are omitted in
+p000. The third guest restraint matches the current APR setup, where its three masks
+define an angle in pAPRika despite the config field being named `torsion_target`.
+This is **GB implicit solvent**, not a periodic box of explicit water.
 
-To run every immediate subdirectory of the configured data directory that has
-the configured guest PDB, MOL2, and FRCMOD files, use the batch runner.
-Directory names do not need to use the `iso_` prefix:
-
-```sh
-python scripts/simulate_guest_batch.py --cpus-per-task 24
-python scripts/simulate_guest_batch.py --simulation apr-p000 --cpus-per-task 24
-```
-
-Add `--clean` to either command to remove the simulation output files after a
-successful run, keeping only the `.prmtop` topology and `production.nc`
-trajectory needed by `dihedral_check.py`. Cleaning is limited to that
-simulation's output directory; failed runs retain their files and logs.
-
-In a Slurm job, it defaults to `SLURM_CPUS_PER_TASK`, so the job script can run
-`python "$SLURM_SUBMIT_DIR/scripts/simulate_guest_batch.py" --simulation apr-p000`
-after activating the Python and Amber environments to select the p000 workflow.
-Each data point writes into its own output directory (`guest_implicit/` for the
-default mode or `guest_apr_p000/` for p000), uses serial `pmemd` to keep each
-concurrent simulation to one CPU, and records command output in
-`batch.log`. Directories missing any of the three guest files are reported and
-skipped. Simulation failures are reported without stopping other data points;
-after all jobs finish, the batch command exits nonzero if any simulation failed.
-
-The `apr-p000` mode instead runs one host-free APR pull window per data point:
-the guest plus DM1/DM2/DM3, aligned and restrained using pAPRika and the APR
-settings in `data/inputs/config.toml`. It writes to `guest_apr_p000/`. Use
-`--simulation apr-p000` in a Slurm batch job to select this mode. Host-anchor
-and host-conformational restraints are omitted. The third guest restraint
-matches the current APR setup, where its three masks define an angle in
-pAPRika despite the config field being named `torsion_target`.
+`python scripts/cleanup.py` also cleans finished guest-only runs the way `--clean` does,
+whether or not the point has been analyzed.
 
 Not in the config on purpose: the `#SBATCH` lines (sbatch reads them before anything else runs),
 the BCD-specific per-glucose restraint atom numbers in `apr_setup.set_restraints`,

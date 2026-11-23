@@ -31,6 +31,9 @@ PLOTS = "plots"                                # analysis plots: <data point>/pl
 RESULTS = "results.json"
 DONE_MARKER = CFG["run"]["done_marker"]       # run.sh writes it in a window folder when all steps finished
 RUN_FAILED_FILE = "run_failed.txt"            # run.sh writes it in a window folder when a step failed
+IMPLICIT_DIR = "windows_implicit"             # guest-only runs (scripts/run_implicit.py):
+IMPLICIT_ONLY = "implicit_only"               #   <dp>/windows_implicit/implicit_only  free guest in GB
+IMPLICIT_P000 = "implicit_p000"               #   <dp>/windows_implicit/implicit_p000  guest alone in the p000 window
 # setup leftovers in the data point folder that cleanup removes after a successful analysis:
 # tleap's complex/ build folder and antechamber's scratch files
 SETUP_TRANSIENT = ("complex", "sqm.in", "sqm.out", "sqm.pdb", "ATOMTYPE.INF", "ANTECHAMBER*", "leap.log")

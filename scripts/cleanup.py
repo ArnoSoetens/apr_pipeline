@@ -5,12 +5,14 @@
     python cleanup.py                           clean every analyzed point (one with results.json)
     python cleanup.py iso_00001-iso_00010       these;  --list todo.txt  the data points in a file
 
-What is removed (only from a point with results.json):
+What is removed from a point with results.json:
     in the data point folder   setup leftovers (datapoints.SETUP_TRANSIENT): complex/, sqm.*, ...
                                everything else is kept: guest_input.json, input PDBs, plots/, your files
     in windows/                everything except restraints.json, the trajectories of the first five
                                windows and the last attach window, and the first window's topology
                                (datapoints.scan() recognizes a cleaned point by that layout)
+and, with or without results.json, from every finished guest-only run in windows_implicit/:
+                               everything except .prmtop files, production.nc and the done marker
 Window folders themselves are kept, symlinks are never followed, and only folders inside the data
 folder are touched.
 """
@@ -23,7 +25,8 @@ script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))
 
 from apr_config import CFG
-from datapoints import RESULTS, is_candidate, SETUP_TRANSIENT, TOPOLOGY, TRAJECTORY, WINDOWS
+from datapoints import (IMPLICIT_DIR, RESULTS, SETUP_TRANSIENT, TOPOLOGY, TRAJECTORY, WINDOWS,
+                        is_candidate)
 
 
 def kept_in_windows():
@@ -50,10 +53,9 @@ def cleanup_plan(data_point, data_dir=None):
     data_point = Path(data_point).resolve()
     if data_point.parent != data_dir:
         raise ValueError(f"refusing to clean a folder outside {data_dir}: {data_point}")
+    remove = implicit_plan(data_point)
     if not (data_point / RESULTS).is_file():
-        return []
-
-    remove = []
+        return sorted(remove)
     for pattern in SETUP_TRANSIENT:
         for path in data_point.glob(pattern):
             remove += files_under(path)
@@ -64,6 +66,20 @@ def cleanup_plan(data_point, data_dir=None):
         remove += [path for path in files_under(windows)
                    if path.relative_to(windows).as_posix() not in keep]
     return sorted(set(remove))
+
+
+def implicit_plan(data_point):
+    """Files to remove from the finished guest-only runs of data_point (see implicit.clean_plan)."""
+    import implicit
+    folder = Path(data_point) / IMPLICIT_DIR
+    if not folder.is_dir() or folder.is_symlink():
+        return []
+    return [path for run in implicit.RUNS if implicit.finished(data_point, run)
+            for path in implicit.clean_plan(implicit.run_dir(data_point, run))]
+
+
+def has_something_to_clean(data_point):
+    return (data_point / RESULTS).is_file() or bool(implicit_plan(data_point))
 
 
 def remove_empty_dirs(data_point):
@@ -125,7 +141,7 @@ def main(argv=None):
 
     def analyzed():
         return sorted(p.name for p in data_dir.iterdir()
-                      if is_candidate(p) and not p.is_symlink() and (p / RESULTS).is_file())
+                      if is_candidate(p) and not p.is_symlink() and has_something_to_clean(p))
 
     try:
         names = selected(args, todo=analyzed, data_dir=data_dir)
@@ -135,8 +151,9 @@ def main(argv=None):
     total_files = total_bytes = 0
     for name in names:
         data_point = data_dir / name
-        if not (data_point / RESULTS).is_file():
-            print(f"cleanup {name}: SKIPPED: not analyzed (no {RESULTS}); nothing removed", flush=True)
+        if not data_point.is_dir() or not has_something_to_clean(data_point):
+            print(f"cleanup {name}: SKIPPED: not analyzed (no {RESULTS}) and no finished guest-only run; "
+                  "nothing removed", flush=True)
             continue
         n_files, n_bytes = cleanup_data_point(data_point, data_dir, args.dry_run, args.verbose)
         total_files += n_files

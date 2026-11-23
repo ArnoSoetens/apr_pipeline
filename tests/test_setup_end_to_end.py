@@ -285,6 +285,16 @@ class RunEndToEndTests(unittest.TestCase):
             code, out = script(str(ROOT / "scripts" / "run.py"), "anion/a000")    # never rerun
             self.assertIn("anion/a000 SKIPPED: already done", out)
 
+            # the guest-only runs on the same point, with the real pmemd
+            code, out = script(str(ROOT / "scripts" / "run_implicit.py"), "--implicit-only", "--p000", "anion")
+            self.assertEqual(code, 0, out)
+            self.assertIn("implicit finished: 2 done, 0 failed, 0 skipped", out)
+            for run in ("implicit_only", "implicit_p000"):
+                folder = dp / "windows_implicit" / run
+                self.assertTrue((folder / TRAJECTORY).stat().st_size > 0, run)
+                self.assertTrue((folder / DONE_MARKER).is_file(), run)
+                self.assertIn("Final Performance Info", (folder / "production.out").read_text())
+
 
 if __name__ == "__main__":
     unittest.main()
