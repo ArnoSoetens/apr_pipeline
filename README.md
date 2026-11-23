@@ -8,15 +8,15 @@ project/
 │   ├── main.py            setup: isomers -> structure -> placement -> parametrize -> APR windows
 │   │                      (serial: python main.py;  or per data point name, as array tasks do)
 │   ├── analysis.py        free energies -> results.json, plots/, data/inputs/results.csv
-│   ├── run.sh             runs all windows (pmemd choice + .in values come from config.toml)
+│   ├── run.py             runs APR windows: picks them, writes data/inputs/*.in + run.env, starts run.sh
+│   ├── run.sh             the worker: pmemd on the given window folders, N at a time (plain bash)
+│   ├── job_gpu.slurm      one GPU job: main.py then run.py --cpus 1 (sbatch scripts/job_gpu.slurm [names])
 │   ├── open_windows.sh    cpptraj + VMD:  ./open_windows.sh iso_00001 a000-a005
-│   ├── job1.slurm / job1_gpu.slurm      single jobs (one node, all data points)
 │   ├── submit_arrays.py   slurm arrays: status | sim | analysis | all  (--submit to really submit)
 │   ├── job_array.slurm    shared by the arrays: modules, conda, amber, then array_task.sh
 │   ├── array_task.sh      what one array task does (its slice of the worklist)
 │   ├── collect_results.py builds results.csv from all results.json
-│   ├── config_env.py      bash cannot read TOML: prints `export` lines for run.sh / open_windows.sh
-│   ├── make_inputs.py     templates/*.in  ->  data/inputs/*.in  (filled from the config)
+│   ├── config_env.py      bash cannot read TOML: prints `export` lines for array_task.sh / open_windows.sh
 │   └── templates/         the three Amber .in files with ${placeholders}
 └── data/                  the project: everything a campaign needs and produces
     ├── inputs/
@@ -288,6 +288,39 @@ pipeline. The `setup` command then submits the usual per-data-point setup jobs.
   The `setup` array leaves failed data points out unless you pass `--retry-failed`.
 * Wait for the setup array to finish before `sim`: the simulation list is made from the windows setup creates.
 
+## Running the APR windows
+
+```
+python scripts/run.py                          # every unfinished window of every set-up data point
+python scripts/run.py iso_00001 iso_00002      # the unfinished windows of these
+python scripts/run.py iso_00001/a000-a005      # these windows (also iso_00001/p010)
+python scripts/run.py --list todo.txt          # names, ranges or windows from a file
+python scripts/run.py --cpus 4 ...             # 4 CPUs; default run.max_jobs (0 = all CPUs); --cpus 1 = serial
+python scripts/run.py --dry-run ...            # only list what would run
+```
+
+`run.py` picks the windows, writes the three Amber `.in` files and `run.env` (the pmemd
+command and names `run.sh` needs) into `data/inputs/` from the config, and starts
+`scripts/run.sh` on the window folders. `run.sh` is plain bash (no Python): it runs
+minimize, production part 1 and part 2 per window, with as many windows at the same time as
+there are CPUs (CPUs / `run.mpi_ranks` with `run.pmemd = "mpi"`); a free CPU takes the next
+window, also from the next data point. A window that is finished (`production2.done` and
+`production.nc`) is never run again, so no trajectory is ever overwritten; a window without
+topology is skipped; a data point whose setup is not finished is skipped with the reason.
+A window whose pmemd step fails gets `run_failed.txt` (date, host, step, exit code, last line
+of that step's output); the other windows go on, and a later successful run removes the file.
+The summary line counts done, failed and skipped windows.
+
+GPU: set `pmemd = "cuda"` in `data/inputs/config.toml` and submit from the repository root
+
+```
+sbatch scripts/job_gpu.slurm                       # setup + every unfinished window
+sbatch scripts/job_gpu.slurm iso_00001/a000-a005   # setup of iso_00001 + these windows
+```
+
+It runs `main.py` and then `run.py --cpus 1` with the same arguments (`main.py` accepts window
+entries and sets up their data point), on one GPU; its log is `data/logs/gpu_<job id>.out`.
+
 ## Slurm arrays
 
 ```
@@ -366,8 +399,6 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
 * Windows simulated before the markers existed: if you know they are complete,
   `for w in data/*/windows/*/; do touch "${w}production2.done"; done` marks them
   (a plain `touch data/*/windows/*/production2.done` does NOT work: the `*` only matches files that already exist).
-* `run.sh` takes data point names (all their windows) or `data_point/window` pairs, and keeps
-  `MAX_JOBS` windows running over data point borders; without arguments it runs every window it finds.
 
 ## Analysis results and diagnostics
 

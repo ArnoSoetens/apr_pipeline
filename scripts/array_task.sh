@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGE="${1:?stage: sim, analysis or collect}"
 
 CONFIG_ENV="$(python "$SCRIPT_DIR/config_env.py")"
-eval "$CONFIG_ENV"                                  # DATA_DIR, DONE_MARKER, ...
+eval "$CONFIG_ENV"                                  # DATA_DIR, COMPLEX_PREFIX, TRAJECTORY, ...
 
 if [ "$STAGE" = "collect" ]; then
     python "$SCRIPT_DIR/collect_results.py"
@@ -62,7 +62,7 @@ case "$STAGE" in
             READY_WINDOWS+=("$point")
         done
         if [ "${#READY_WINDOWS[@]}" -gt 0 ]; then
-            bash "$SCRIPT_DIR/run.sh" "${READY_WINDOWS[@]}"
+            python "$SCRIPT_DIR/run.py" --cpus "${SLURM_CPUS_PER_TASK:-1}" "${READY_WINDOWS[@]}"
         fi
         ;;
     analysis)

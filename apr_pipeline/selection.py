@@ -72,14 +72,20 @@ def entries_from(args):
     return entries
 
 
-def resolve(entries, data_dir=None, windows=False):
-    """Expand entries into data point names, or (name, window or None) pairs when windows=True."""
+def resolve(entries, data_dir=None, windows=False, strip_windows=False):
+    """Expand entries into data point names, or (name, window or None) pairs when windows=True.
+
+    strip_windows=True accepts window entries too and keeps only their data point (main.py uses this,
+    so the GPU job can hand the same arguments to main.py and run.py).
+    """
     data_dir = Path(data_dir or CFG["directories"]["data"])
     out = []
     for entry in entries:
         name, _, window = entry.partition("/")
-        if window and not windows:
+        if window and not windows and not strip_windows:
             raise ValueError(f"{entry!r}: this script works on whole data points, not windows")
+        if strip_windows:
+            window = ""
 
         if (data_dir / name).is_dir():              # a folder name that only looks like a range
             names = [name]
@@ -105,7 +111,7 @@ def resolve(entries, data_dir=None, windows=False):
     return list(dict.fromkeys(out))                 # drop duplicates, keep the order
 
 
-def selected(args, todo, data_dir=None, windows=False):
+def selected(args, todo, data_dir=None, windows=False, strip_windows=False):
     """The script's selection: the entries given (NAME ... and --list), or todo() when none were.
 
     Returns data point names, or (name, window or None) pairs when windows=True. todo() returns
@@ -113,4 +119,4 @@ def selected(args, todo, data_dir=None, windows=False):
     """
     if not args.names and not getattr(args, "list_file", None):
         return todo()
-    return resolve(entries_from(args), data_dir=data_dir, windows=windows)
+    return resolve(entries_from(args), data_dir=data_dir, windows=windows, strip_windows=strip_windows)

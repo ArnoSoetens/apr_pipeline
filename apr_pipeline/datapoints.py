@@ -29,6 +29,8 @@ FAILED_FILE = "setup_failed.txt"
 ANALYSIS_FAILED_FILE = "analysis_failed.txt"
 PLOTS = "plots"                                # analysis plots: <data point>/plots/
 RESULTS = "results.json"
+DONE_MARKER = CFG["run"]["done_marker"]       # run.sh writes it in a window folder when all steps finished
+RUN_FAILED_FILE = "run_failed.txt"            # run.sh writes it in a window folder when a step failed
 # setup leftovers in the data point folder that cleanup removes after a successful analysis:
 # tleap's complex/ build folder and antechamber's scratch files
 SETUP_TRANSIENT = ("complex", "sqm.in", "sqm.out", "sqm.pdb", "ATOMTYPE.INF", "ANTECHAMBER*", "leap.log")
@@ -163,6 +165,12 @@ def scan(dp):
     if left:
         return "needs_simulation", left
     return ("analyzed" if (dp / "results.json").exists() else "needs_analysis"), []
+
+
+def window_finished(window_dir):
+    """A window is finished when it has the done marker and its trajectory (run.sh skips it)."""
+    window_dir = Path(window_dir)
+    return (window_dir / DONE_MARKER).is_file() and (window_dir / TRAJECTORY).is_file()
 
 
 def has_complete_run(dp):

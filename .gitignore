@@ -14,6 +14,7 @@ __pycache__/
 
 # HPC & Slurm logs (scripts/job_array.slurm is tracked anyway)
 *.slurm
+!scripts/job_gpu.slurm
 *.out
 *.err
 

@@ -14,7 +14,7 @@ from pathlib import Path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 
-from apr_config import CFG, get_pmemd_command
+from apr_config import CFG
 
 
 def dq(value):
@@ -35,14 +35,6 @@ export("DATA_DIR", D["data"])
 export("HOST_PDB", str(Path(D["host"]) / f'{CFG["naming"]["host_prefix"]}.pdb'))
 export("HOST_PREFIX", CFG["naming"]["host_prefix"])
 export("GUEST_PREFIX", CFG["naming"]["guest_prefix"])
-export("INPUT_DIR", D["inputs"])
 export("LOG_DIR", D["logs"])
 export("COMPLEX_PREFIX", CFG["naming"]["complex_prefix"])
 export("TRAJECTORY", CFG["analysis"]["trajectory"])
-export("DONE_MARKER", CFG["run"]["done_marker"])
-export("PMEMD", get_pmemd_command())
-
-if CFG["run"]["max_jobs"] > 0:
-    export("MAX_JOBS", CFG["run"]["max_jobs"])
-else:   # 0 = as many windows as CPUs: the slurm request, or all cores outside slurm
-    export("MAX_JOBS", "${SLURM_CPUS_PER_TASK:-$(nproc)}", raw=True)

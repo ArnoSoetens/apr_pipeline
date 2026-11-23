@@ -240,5 +240,51 @@ class ConfigChargeEndToEndTests(unittest.TestCase):
                     self.assertAlmostEqual(total, charge, places=2)
 
 
+
+@unittest.skipUnless(shutil.which("tleap") and shutil.which("antechamber") and shutil.which("pmemd"),
+                     "needs AmberTools and pmemd")
+class RunEndToEndTests(unittest.TestCase):
+    """main.py, then run.py with the real pmemd on two windows, with very short runs."""
+
+    def test_setup_then_two_windows_with_real_pmemd(self):
+        import re
+        from datapoints import DONE_MARKER, TRAJECTORY
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data = temporary_project(Path(tmp))
+            config = data / "inputs" / "config.toml"
+            text = config.read_text()
+            for key, value in (("minimize_maxcyc", 20), ("minimize_ncyc", 10), ("steps_equil", 100),
+                               ("steps_production", 200), ("write_every", 20), ("restart_every", 100),
+                               ("pmemd", '"serial"')):
+                text = re.sub(rf"(?m)^{key}\s*=\s*[^#\n]*", f"{key} = {value}  ", text, count=1)
+            config.write_text(text)
+            env = {**os.environ, "APR_DATA": str(data)}
+            dp = data / "anion"
+            dp.mkdir()
+            (dp / "anion.smi").write_text(PFBA_ANION + "\n")
+
+            def script(*args):
+                result = subprocess.run([sys.executable, *args], env=env, capture_output=True,
+                                        text=True, timeout=900)
+                return result.returncode, result.stdout + result.stderr
+
+            code, out = script(str(ROOT / "scripts" / "main.py"), "anion/a000")
+            self.assertIn("1 done, 0 failed", out)
+            code, out = script(str(ROOT / "scripts" / "run.py"), "--cpus", "2", "anion/a000", "anion/p000")
+            self.assertEqual(code, 0, out)
+            self.assertIn("run finished: 2 done, 0 failed, 0 skipped", out)
+            for window in ("a000", "p000"):
+                folder = dp / "windows" / window
+                self.assertTrue((folder / TRAJECTORY).stat().st_size > 0, window)
+                self.assertTrue((folder / DONE_MARKER).is_file(), window)
+                self.assertFalse((folder / "run_failed.txt").exists(), window)
+                self.assertIn("Final Performance Info", (folder / "production2.out").read_text())
+            self.assertIn("nstlim =        200", (data / "inputs" / "production_nopbc2.in").read_text())
+
+            code, out = script(str(ROOT / "scripts" / "run.py"), "anion/a000")    # never rerun
+            self.assertIn("anion/a000 SKIPPED: already done", out)
+
+
 if __name__ == "__main__":
     unittest.main()

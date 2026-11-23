@@ -6,6 +6,7 @@
     python main.py iso_00001 ...            just these data points (this is what the slurm array tasks do)
     python main.py iso_00001-iso_00010      a range of data points
     python main.py --list todo.txt          the data points in a file (one or more per line, # comments)
+    python main.py iso_00001/a000-a005      window entries (as run.py takes them) set up their data point
     python main.py --from placement [...]   redo placement and everything after it, whatever exists
 
 Stages, in order: structure -> placement -> parametrize -> apr_setup. Each data point starts at the
@@ -53,7 +54,7 @@ def every_data_point():
 
 
 try:
-    names = selected(args, todo=every_data_point)
+    names = selected(args, todo=every_data_point, strip_windows=True)   # iso_00001/a000 -> iso_00001
 except (FileNotFoundError, ValueError) as e:
     sys.exit(f"main.py: {e}")
 
