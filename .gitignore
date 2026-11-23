@@ -1,8 +1,12 @@
 # Data & cache
+# data/ is not tracked, except the project settings and host files in data/inputs/
 data/*
-!data/BCD.frcmod
-!data/BCD.mol2
-!data/BCD.pdb
+!data/inputs/
+data/inputs/*
+!data/inputs/config.toml
+!data/inputs/BCD.frcmod
+!data/inputs/BCD.mol2
+!data/inputs/BCD.pdb
 data_previous_runs/
 previous_data/
 __pycache__/

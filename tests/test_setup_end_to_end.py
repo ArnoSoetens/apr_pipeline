@@ -27,7 +27,7 @@ class SetupEndToEndTests(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls._tmp.name)
         cls.data = temporary_project(cls.root)
-        cls.env = {**os.environ, "APR_CONFIG": str(cls.root / "config.toml")}
+        cls.env = {**os.environ, "APR_DATA": str(cls.data)}
 
     @classmethod
     def tearDownClass(cls):
@@ -207,10 +207,10 @@ class ConfigChargeEndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = temporary_project(root)
-            config = root / "config.toml"
+            config = data / "inputs" / "config.toml"
             config.write_text(re.sub(r'(?m)^net_charge\s*=\s*"auto"', "net_charge = -1",
                                      config.read_text()))
-            env = {**os.environ, "APR_CONFIG": str(config)}
+            env = {**os.environ, "APR_DATA": str(data)}
 
             for name, smiles in (("anion", PFBA_ANION), ("neutral", "OC(=O)C(F)(F)C(F)(F)C(F)(F)F")):
                 (data / name).mkdir()

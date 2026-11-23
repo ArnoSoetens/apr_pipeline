@@ -2,8 +2,7 @@
 
 ```
 project/
-├── config.toml            <- the one file you edit
-├── apr_pipeline/          python modules (apr_config.py reads config.toml;
+├── apr_pipeline/          python modules (apr_config.py reads data/inputs/config.toml;
 │                          datapoints.py knows the state of each data point)
 ├── scripts/
 │   ├── main.py            setup: isomers -> structure -> placement -> parametrize -> APR windows
@@ -17,16 +16,30 @@ project/
 │   ├── array_task.sh      what one array task does (its slice of the worklist)
 │   ├── collect_results.py builds results.csv from all results.json
 │   ├── config_env.py      bash cannot read TOML: prints `export` lines for run.sh / open_windows.sh
-│   ├── make_inputs.py     templates/*.in  ->  inputs/*.in  (filled from config.toml)
+│   ├── make_inputs.py     templates/*.in  ->  data/inputs/*.in  (filled from the config)
 │   └── templates/         the three Amber .in files with ${placeholders}
-└── data/                  BCD.pdb / .mol2 / .frcmod, SMILES .txt, iso_00001/, ...
+└── data/                  the project: everything a campaign needs and produces
+    ├── inputs/
+    │   ├── config.toml    <- the one file you edit (tracked by git)
+    │   ├── BCD.pdb / .mol2 / .frcmod   host files (tracked by git)
+    │   ├── <list>.txt     SMILES list (input.smiles_list)
+    │   └── *.in, results.csv          written by the scripts
+    ├── logs/              slurm output and worklists of submitted arrays
+    └── iso_00001/ ...     data points
 ```
 
 * Needs Python >= 3.11 (tomllib), i.e. your `paprika` environment.
-* `APR_CONFIG=/path/to/other.toml` makes everything use a different config.
-* A variable exported in the environment beats the config for bash settings
-  (`export PMEMD=pmemd`, `export MAX_JOBS=4`).
+* Every script reads `data/inputs/config.toml`; the other folders follow from the
+  data folder (there is no `[directories]` section any more). To work on another
+  data folder, move it to `data/`, or set `APR_DATA=/path/to/that/folder` (it needs its
+  own `inputs/config.toml`).
+* Archiving or copying `data/` keeps every setting and input of the simulations.
 * `scripts/` assumes `apr_pipeline/` sits next to it.
+
+Starting a new campaign: put the SMILES list in `data/inputs/` and set
+`smiles_list` under `[input]` in `data/inputs/config.toml`, then
+`python scripts/submit_arrays.py all --submit` (or `python scripts/main.py` locally) creates
+the data point folders and sets them up. For a GPU run set `run.pmemd = "cuda"`.
 
 `scripts/open_windows.sh` also supports static structure inspection:
 
@@ -65,7 +78,7 @@ python scripts/simulate_guest.py guest.pdb guest.mol2 \
 
 The script builds an Amber topology with LEaP and runs minimization,
 equilibration, and production using the force field, GB model, temperature,
-timestep, thermostat, and run lengths configured in `config.toml`. If
+timestep, thermostat, and run lengths configured in `data/inputs/config.toml`. If
 `--frcmod` is omitted, `parmchk2` generates one from the MOL2. The PDB must
 contain one guest residue whose residue name and atom names match the MOL2;
 the MOL2 must already contain the desired GAFF atom types and partial charges.
@@ -102,7 +115,7 @@ after all jobs finish, the batch command exits nonzero if any simulation failed.
 
 The `apr-p000` mode instead runs one host-free APR pull window per data point:
 the guest plus DM1/DM2/DM3, aligned and restrained using pAPRika and the APR
-settings in `config.toml`. It writes to `guest_apr_p000/`. Use
+settings in `data/inputs/config.toml`. It writes to `guest_apr_p000/`. Use
 `--simulation apr-p000` in a Slurm batch job to select this mode. Host-anchor
 and host-conformational restraints are omitted. The third guest restraint
 matches the current APR setup, where its three masks define an angle in
@@ -187,7 +200,7 @@ so no window from an older window list (e.g. a longer pull) is left behind for
 `run.sh` to simulate. That is safe because setup never runs on a folder with a
 trajectory.
 
-The SMILES list (`directories.smiles_list`) is only read when the data
+The SMILES list (`input.smiles_list`, a file in `data/inputs/`) is only read when the data
 directory has no data point folders at all.
 
 For custom guest structures, create a folder under `data/` for each input and
@@ -199,8 +212,8 @@ python apr_pipeline/placement.py my_guest    # only data/my_guest/
 ```
 
 Placement writes `UNL.pdb` and the host-guest complex PDB to the same folder as
-the input. The configured host (`data/BCD.pdb` by default) and placement
-settings in `config.toml` are used. Any `.pdb` in the folder is an input
+the input. The configured host (`data/inputs/BCD.pdb`) and placement
+settings in `data/inputs/config.toml` are used. Any `.pdb` in the folder is an input
 except `BCD-UNL.pdb` and antechamber's `sqm.pdb`; `UNL.pdb` only counts when it
 is the only one (next to another PDB it is an earlier placement's output).
 Folders must contain exactly one input. The guest's residue name in the input
@@ -226,7 +239,7 @@ Each data point has a `guest_input.json` that the setup stages hand to each othe
 * `smiles` is written when the folder has a `.smi`; for a guest that starts as
   a PDB it stays `null`.
 * `net_charge` is the charge parametrize uses, always taken from this file.
-  While it is `null`, `parametrize.net_charge` in `config.toml` fills it in:
+  While it is `null`, `parametrize.net_charge` in `data/inputs/config.toml` fills it in:
   * `"auto"`: the formal charge of the SMILES. A PDB-only guest stays `null`
     (a PDB alone does not reliably give the charge), and parametrize asks you
     to set it.
@@ -259,11 +272,11 @@ Each data point has a `guest_input.json` that the setup stages hand to each othe
     G2, e.g. after editing them and running only `--from apr_setup`), it stops
     and asks you to redo `--from placement`.
 
-`structure.output_pdb` in `config.toml` names the file the 3D guest built from
+`structure.output_pdb` in `data/inputs/config.toml` names the file the 3D guest built from
 the SMILES is written to. With the default `UNL.pdb`, placement overwrites it.
 
 Create or edit the SMILES text file locally before submitting. By default, the array script reads
-`data/Seven_PFAS.txt` (`directories.smiles_list` in `config.toml`), which must contain one SMILES
+`data/inputs/<input.smiles_list>` (set in `data/inputs/config.toml`), which must contain one SMILES
 per line. `main.py` and the setup array create data-point folders from that file only when the
 data directory has no data point folders yet; otherwise the list file is not needed. Analysis only
 runs when every configured window contains the configured production trajectory (normally
@@ -312,7 +325,7 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   `--windows-per-task` to override the calculated package size.
 * More tasks than `max_array_size` are split over several arrays (each with an offset into the list).
 * A finished window gets a `production2.done` file; resubmitting only puts unfinished windows in the list.
-* Analysis defaults to one data point per task and `analysis_mem` of `4G` in `config.toml`.
+* Analysis defaults to one data point per task and `analysis_mem` of `4G` in `data/inputs/config.toml`.
   This avoids retaining PyMBAR/JAX memory across several analyses in one Python process.
   Override the task size with `--points-per-task` or adjust `analysis_mem` for the cluster.
 * For a small job (few tasks) the script suggests a smaller `--windows-per-task`, because then all
@@ -464,7 +477,7 @@ python other/dihedral_check.py iso_00001
 ```
 
 If no dihedrals are supplied, the script reads the guest mol2 from the
-datapoint folder (using `naming.guest_prefix` in `config.toml`) and
+datapoint folder (using `naming.guest_prefix` in `data/inputs/config.toml`) and
 automatically finds its rotatable torsions. It calls RDKit's
 `TorsionFingerprints.CalculateTorsionLists`, takes its non-ring torsions
 (using RDKit's rotatable-bond rules), then maps each torsion's mol2 atom names

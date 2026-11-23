@@ -75,7 +75,7 @@ class StatusBySetupStageTests(unittest.TestCase):
             (built / FAILED_FILE).write_text("2026-11-20 10:00:00\nold\n")   # stale: setup is done
             point("junk", "notes.txt")
 
-            env = {**os.environ, "APR_CONFIG": str(root / "config.toml")}
+            env = {**os.environ, "APR_DATA": str(data)}
 
             def submit_arrays_py(*args):
                 result = subprocess.run([sys.executable, str(Path(submit_arrays.__file__)), *args],

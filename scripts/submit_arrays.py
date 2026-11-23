@@ -57,6 +57,7 @@ from datapoints import (
     all_data_points,
     ensure_data_directories,
     failure_reason,
+    is_candidate,
     next_stage,
     scan,
 )
@@ -308,7 +309,7 @@ def show_status(dps, only=None):
             by_state.setdefault(st, []).append(dp.name)
             windows_left += len(left)
     unrecognized = sorted(p.name for p in DATA.iterdir()
-                          if p.is_dir() and (not only or p.name in only) and next_stage(p) is None
+                          if is_candidate(p) and (not only or p.name in only) and next_stage(p) is None
                           ) if DATA.is_dir() else []
 
     print(f"{len(dps)} data points in {DATA}")

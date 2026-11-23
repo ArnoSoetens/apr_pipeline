@@ -20,7 +20,7 @@ class StageScriptTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.data = temporary_project(self.root)
-        self.env = {**os.environ, "APR_CONFIG": str(self.root / "config.toml")}
+        self.env = {**os.environ, "APR_DATA": str(self.data)}
 
     def tearDown(self):
         self._tmp.cleanup()

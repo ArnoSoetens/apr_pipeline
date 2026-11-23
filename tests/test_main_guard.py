@@ -16,26 +16,18 @@ from datapoints import (COMPLEX_PDB, GUEST_FRCMOD, GUEST_MOL2, GUEST_PDB, STAGES
 
 
 def temporary_project(root):
-    """config.toml copy whose data and host folders are root/data (host files copied in)."""
+    """A data folder root/data with inputs/config.toml (a copy of the real one) and the host files.
+
+    Use it with the environment variable APR_DATA=<the returned folder>.
+    """
     data = root / "data"
-    data.mkdir()
+    inputs = data / "inputs"
+    inputs.mkdir(parents=True)
     for suffix in (".pdb", ".mol2", ".frcmod"):
-        shutil.copy(ROOT / "data" / f"BCD{suffix}", data)
-    config = (ROOT / "config.toml").read_text()
-    directories = "\n".join([
-        "[directories]",
-        f'data = "{data}"',
-        f'host = "{data}"',
-        f'scripts = "{ROOT / "scripts"}"',
-        f'pipeline = "{ROOT / "apr_pipeline"}"',
-        f'smiles_list = "{root / "missing.txt"}"',
-        f'templates = "{ROOT / "scripts" / "templates"}"',
-        f'inputs = "{root / "inputs"}"',
-        f'logs = "{root / "logs"}"',
-        "",
-    ])
-    config = re.sub(r"\[directories\]\n.*?(?=\n# -{10,})", directories, config, count=1, flags=re.S)
-    (root / "config.toml").write_text(config)
+        shutil.copy(ROOT / "data" / "inputs" / f"BCD{suffix}", inputs)
+    config = (ROOT / "data" / "inputs" / "config.toml").read_text()
+    config = re.sub(r'(?m)^smiles_list\s*=.*$', 'smiles_list = "missing.txt"', config, count=1)
+    (inputs / "config.toml").write_text(config)
     return data
 
 
@@ -58,7 +50,7 @@ class MainGuardTests(unittest.TestCase):
             (dp / "windows" / "a000" / TRAJECTORY).write_text("x\n")
             before = snapshot(dp)
 
-            env = {**os.environ, "APR_CONFIG": str(root / "config.toml")}
+            env = {**os.environ, "APR_DATA": str(data)}
             for args in ([], ["--from", "structure"], ["iso_00001"], ["--from", "apr_setup", "iso_00001"]):
                 result = subprocess.run(
                     [sys.executable, str(ROOT / "scripts" / "main.py"), *args],

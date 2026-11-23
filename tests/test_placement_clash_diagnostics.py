@@ -89,10 +89,10 @@ class PlacementScriptClashTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = temporary_project(root)
-            config = root / "config.toml"
+            config = data / "inputs" / "config.toml"
             normal = config.read_text()
             config.write_text(re.sub(r"(?m)^clash_cutoff\s*=\s*[0-9.]+", "clash_cutoff = 100", normal))
-            env = {**os.environ, "APR_CONFIG": str(config)}
+            env = {**os.environ, "APR_DATA": str(data)}
 
             dp = data / "iso_00001"
             dp.mkdir()

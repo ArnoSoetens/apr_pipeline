@@ -78,7 +78,7 @@ class PlacementAnchorTests(unittest.TestCase):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls._tmp.name)
         cls.data = temporary_project(cls.root)
-        cls.env = {**os.environ, "APR_CONFIG": str(cls.root / "config.toml")}
+        cls.env = {**os.environ, "APR_DATA": str(cls.data)}
 
         cls.source = cls.root / "pfba.pdb"
         mol = smiles_to_pdb(PFBA_ANION, str(cls.source))

@@ -21,6 +21,7 @@ from datapoints import (
     TRAJECTORY,
     clear_failed,
     has_simulation_output,
+    is_candidate,
     mark_failed,
     next_stage,
 )
@@ -95,7 +96,7 @@ def stage_main(stage, argv=None, data_dir=None):
 
     def needing_stage():
         names = sorted(dp.name for dp in data_dir.iterdir()
-                       if dp.is_dir() and next_stage(dp) == stage) if data_dir.is_dir() else []
+                       if is_candidate(dp) and next_stage(dp) == stage) if data_dir.is_dir() else []
         if not names:
             print(f"no data point in {data_dir} needs {stage}", flush=True)
         return names

@@ -20,7 +20,7 @@ import sys
 import time
 from pathlib import Path
 
-from apr_config import CFG, get_attach_fractions, get_pull_distances
+from apr_config import CFG, RESERVED, get_attach_fractions, get_pull_distances
 
 DATA = Path(CFG["directories"]["data"])
 TOPOLOGY = f'{CFG["naming"]["complex_prefix"]}-dum.prmtop'
@@ -108,13 +108,18 @@ def next_stage(dp):
     return None
 
 
+def is_candidate(path):
+    """A folder in the data folder that can be a data point (not inputs/ or logs/)."""
+    return path.is_dir() and path.name not in RESERVED
+
+
 def all_data_points(only=None, data_dir=DATA):
     """Folders in the data directory that any setup stage recognizes (including done ones), sorted."""
     data_dir = Path(data_dir)
     if not data_dir.is_dir():
         return []
     return sorted(p for p in data_dir.iterdir()
-                  if p.is_dir() and (not only or p.name in only) and next_stage(p) is not None)
+                  if is_candidate(p) and (not only or p.name in only) and next_stage(p) is not None)
 
 
 def ensure_data_directories(data_dir=DATA, smiles_list=None):
@@ -130,7 +135,7 @@ def ensure_data_directories(data_dir=DATA, smiles_list=None):
     if not smiles_list.is_file():
         raise FileNotFoundError(
             f"no data point folders in {data_dir}, and no SMILES list to create them from "
-            f"({smiles_list}, directories.smiles_list in config.toml)")
+            f"({smiles_list}: put it in inputs/ and set input.smiles_list in inputs/config.toml)")
     print(f"[directories] creating data point folders from {smiles_list}", flush=True)
     subprocess.run(
         [sys.executable, str(Path(__file__).with_name("create_data_directories.py")),

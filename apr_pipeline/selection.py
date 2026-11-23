@@ -15,7 +15,7 @@ is kept, so the script reports it ("no such data point folder").
 import re
 from pathlib import Path
 
-from apr_config import CFG
+from apr_config import CFG, RESERVED
 
 RANGE = re.compile(r"^(?P<prefix>.*?)(?P<first>\d+)-(?P=prefix)(?P<last>\d+)$")
 
@@ -53,6 +53,13 @@ def check_name(name):
     return name
 
 
+def check_point(name):
+    check_name(name)
+    if name in RESERVED:
+        raise ValueError(f"{name!r} is the data folder's {name}/ folder, not a data point")
+    return name
+
+
 def entries_from(args):
     """The raw entries: the NAME arguments, then the --list file's entries."""
     entries = list(args.names)
@@ -79,7 +86,7 @@ def resolve(entries, data_dir=None, windows=False):
         else:
             names = expand_range(name)
             if names is None:
-                names = [check_name(name)]
+                names = [check_point(name)]
             else:
                 present = [n for n in names if (data_dir / n).is_dir()]
                 missing = [n for n in names if n not in present]
@@ -92,7 +99,7 @@ def resolve(entries, data_dir=None, windows=False):
         if window:
             window_names = expand_range(window) or [check_name(window)]
         for n in names:
-            check_name(n)
+            check_point(n)
             for w in window_names:
                 out.append((n, w) if windows else n)
     return list(dict.fromkeys(out))                 # drop duplicates, keep the order

@@ -1,10 +1,18 @@
 """Loads config.toml once and exposes it as CFG (a plain dict) plus a few derived values.
 
 Every module does:   from apr_config import CFG
-The config file is  <project>/config.toml  unless the environment variable APR_CONFIG points elsewhere.
+The config file is  <data>/inputs/config.toml. The data folder is <repository>/data, or the folder in
+the environment variable APR_DATA. CFG["directories"] is not read from the config but derived:
+    data       the data folder (data point folders: iso_00001, ...)
+    inputs     <data>/inputs: config.toml, host files, SMILES list, Amber .in files, results.csv
+    host       <data>/inputs (BCD.pdb, BCD.mol2, BCD.frcmod)
+    logs       <data>/logs: slurm output and worklists
+    smiles_list <data>/inputs/<input.smiles_list>
+    scripts, pipeline, templates: the code's own folders
 """
 import math
 import os
+import sys
 from pathlib import Path
 
 try:
@@ -15,7 +23,12 @@ except ModuleNotFoundError:           # older python: pip install tomli
 import numpy as np
 
 PIPELINE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = Path(os.environ.get("APR_CONFIG", PIPELINE_DIR.parent / "config.toml"))
+REPO_DIR = PIPELINE_DIR.parent
+DATA_DIR = Path(os.environ.get("APR_DATA") or REPO_DIR / "data").expanduser().resolve()
+INPUTS = "inputs"
+LOGS = "logs"
+RESERVED = (INPUTS, LOGS)              # folders in the data folder that are never a data point
+CONFIG_PATH = DATA_DIR / INPUTS / "config.toml"
 
 # tleap radii recommended for each GB model (Amber manual table)
 RADII_BY_IGB = {1: "mbondi", 2: "mbondi2", 5: "mbondi2", 7: "bondi", 8: "mbondi3"}
@@ -157,9 +170,37 @@ def _validate(cfg):
     _radii_for(cfg)
 
 
+def directories(data_dir, smiles_list):
+    """The folders, derived from the data folder and the code's location."""
+    data_dir = Path(data_dir)
+    inputs = data_dir / INPUTS
+    return {
+        "data": str(data_dir),
+        "inputs": str(inputs),
+        "host": str(inputs),
+        "logs": str(data_dir / LOGS),
+        "smiles_list": str(inputs / smiles_list),
+        "scripts": str(REPO_DIR / "scripts"),
+        "pipeline": str(PIPELINE_DIR),
+        "templates": str(REPO_DIR / "scripts" / "templates"),
+    }
+
+
 def load_config(path=CONFIG_PATH):
+    """Read <data>/inputs/config.toml; the data folder is the folder above inputs/."""
+    path = Path(path).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"no settings found: expected {path} (the data folder is {path.parent.parent}; "
+            f"set APR_DATA to use another data folder)")
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
+
+    if "directories" in cfg:
+        print(f"note: [directories] in {path} is ignored; the folders follow from the data folder",
+              file=sys.stderr)
+    cfg["directories"] = directories(path.parent.parent,
+                                     cfg.get("input", {}).get("smiles_list", "smiles.txt"))
 
     # analysis.enhanced / analysis.convergence_plot: replaced by analysis.py --enhanced; ignored if present
     cfg["analysis"].pop("enhanced", None)
@@ -179,9 +220,6 @@ def load_config(path=CONFIG_PATH):
     if distance_wall["mode"] == "rim":
         distance_wall.setdefault("rim_offset", 1.0)
         distance_wall.setdefault("parabolic_width", 1.0)
-    base = Path(path).resolve().parent                 # relative paths start here
-    for key, value in cfg["directories"].items():
-        cfg["directories"][key] = str((base / value).resolve())
     csv = cfg["analysis"]["results_csv"]              # relative to the data directory, so that
     cfg["analysis"]["results_csv"] = str((Path(cfg["directories"]["data"]) / csv).resolve())  # data/ holds it
 
@@ -194,6 +232,7 @@ def load_config(path=CONFIG_PATH):
 
 
 CFG = load_config()
+Path(CFG["directories"]["logs"]).mkdir(exist_ok=True)   # slurm needs it before a job starts (--output)
 
 
 # ---- values derived from the config (shared by setup and analysis) ----------

@@ -46,7 +46,7 @@ class AnalysisScriptTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name)
         self.data = temporary_project(self.root)
-        self.env = {**os.environ, "APR_CONFIG": str(self.root / "config.toml")}
+        self.env = {**os.environ, "APR_DATA": str(self.data)}
         self.fake = self.root / "fake_apr_analysis.py"
         self.fake.write_text(FAKE_APR_ANALYSIS)
         self.csv = self.data / "inputs" / "results.csv"
@@ -163,7 +163,7 @@ class AnalysisConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = temporary_project(root)
-            config = root / "config.toml"
+            config = data / "inputs" / "config.toml"
             config.write_text(config.read_text().replace(
                 "[analysis]", "[analysis]\nenhanced = true\nconvergence_plot = false", 1))
             cfg = apr_config.load_config(config)

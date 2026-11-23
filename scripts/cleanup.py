@@ -23,7 +23,7 @@ script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))
 
 from apr_config import CFG
-from datapoints import RESULTS, SETUP_TRANSIENT, TOPOLOGY, TRAJECTORY, WINDOWS
+from datapoints import RESULTS, is_candidate, SETUP_TRANSIENT, TOPOLOGY, TRAJECTORY, WINDOWS
 
 
 def kept_in_windows():
@@ -125,7 +125,7 @@ def main(argv=None):
 
     def analyzed():
         return sorted(p.name for p in data_dir.iterdir()
-                      if p.is_dir() and not p.is_symlink() and (p / RESULTS).is_file())
+                      if is_candidate(p) and not p.is_symlink() and (p / RESULTS).is_file())
 
     try:
         names = selected(args, todo=analyzed, data_dir=data_dir)
