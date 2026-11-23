@@ -284,7 +284,9 @@ minimize, production part 1 and part 2 per window, with as many windows at the s
 there are CPUs (CPUs / `run.mpi_ranks` with `run.pmemd = "mpi"`); a free CPU takes the next
 window, also from the next data point. A window that is finished (`production2.done` and
 `production.nc`) is never run again, so no trajectory is ever overwritten; a window without
-topology is skipped; a data point whose setup is not finished is skipped with the reason.
+topology is skipped; a data point whose setup is not finished is skipped with the reason, and so is
+an analyzed one (its windows no longer look finished after cleanup) unless you name its windows
+(`run.py iso_00001/a000` runs that window again).
 A window whose pmemd step fails gets `run_failed.txt` (date, host, step, exit code, last line
 of that step's output); the other windows go on, and a later successful run removes the file.
 The summary line counts done, failed and skipped windows.

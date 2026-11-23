@@ -8,7 +8,8 @@
     python run.py --dry-run ...            only list the windows that would run
 
 A finished window (done marker + production.nc) is never run again. A data point whose setup is not
-finished is skipped. The .in files and run.env are written into <data>/inputs/ from config.toml,
+finished is skipped, and so is an analyzed one (results.json; after cleanup its windows no longer
+look finished) unless you name its windows, e.g. iso_00001/a000. The .in files and run.env are written into <data>/inputs/ from config.toml,
 then scripts/run.sh runs the windows (see there; a failed window gets run_failed.txt).
 """
 import argparse
@@ -21,7 +22,7 @@ script_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(script_dir.parent / "apr_pipeline"))   # apr_pipeline/ sits next to scripts/
 
 from apr_config import CFG
-from datapoints import DONE, WINDOWS, all_data_points, next_stage, window_finished
+from datapoints import DONE, WINDOWS, all_data_points, next_stage, scan, window_finished
 from selection import add_selection_args, selected
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -37,7 +38,9 @@ data_dir = Path(CFG["directories"]["data"])
 
 
 def every_set_up_point():
-    return [(dp.name, None) for dp in all_data_points() if next_stage(dp) == DONE]
+    """Set-up points that are not analyzed yet (analyzed ones are left out, as in submit_arrays sim)."""
+    return [(dp.name, None) for dp in all_data_points()
+            if next_stage(dp) == DONE and scan(dp)[0] != "analyzed"]
 
 
 try:
@@ -67,6 +70,9 @@ for name, window in entries:
     stage = next_stage(dp)
     if stage != DONE:
         skip(name, f"setup not finished (next stage: {stage})")
+        continue
+    if window is None and scan(dp)[0] == "analyzed":
+        skip(name, f"already analyzed; name a window ({name}/{WINDOWS[0]}) to run it anyway")
         continue
     folders = [dp / "windows" / w for w in ([window] if window else WINDOWS)]
     done = [f for f in folders if window_finished(f)]

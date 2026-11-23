@@ -271,6 +271,41 @@ class RunPyTests(unittest.TestCase):
         self.assertTrue((self.data / "iso_00001" / "windows" / "a000" / "run_failed.txt").is_file())
 
 
+class AnalyzedPointsTests(unittest.TestCase):
+    """A cleaned-up point keeps a few trajectories but no done markers: never rerun unless asked."""
+
+    def test_analyzed_points_are_only_run_when_a_window_is_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = temporary_project(root)
+            fake = FakePmemd(root)
+            env = fake.env(APR_DATA=str(data))
+            dp = set_up_point(data, "iso_00001", finished=WINDOWS)
+            (dp / "results.json").write_text("{}\n")
+            for window in WINDOWS:                                # what cleanup leaves behind
+                folder = dp / "windows" / window
+                (folder / DONE_MARKER).unlink()
+                if window != WINDOWS[0]:
+                    (folder / f"{TOP}.prmtop").unlink()
+                    if window not in WINDOWS[:5]:
+                        (folder / TRAJECTORY).unlink()
+
+            def run_py(*args):
+                result = subprocess.run([sys.executable, str(ROOT / "scripts" / "run.py"), *args], env=env,
+                                        capture_output=True, text=True, timeout=120)
+                return result.returncode, result.stdout + result.stderr
+
+            code, out = run_py()
+            self.assertIn("nothing to run", out)
+            code, out = run_py("iso_00001")
+            self.assertIn("iso_00001 SKIPPED: already analyzed; name a window (iso_00001/a000)", out)
+            self.assertEqual(fake.calls(), [])
+
+            code, out = run_py("iso_00001/a000")                  # asked for explicitly: it runs
+            self.assertEqual(code, 0, out)
+            self.assertIn("run finished: 1 done", out)
+
+
 class MainWithWindowEntriesTests(unittest.TestCase):
     def test_window_entries_select_their_data_point(self):
         with tempfile.TemporaryDirectory() as tmp:
