@@ -11,8 +11,9 @@ States (checked on the files in the data point folder):
     no_windows        no windows/ folder yet (setup not run)
     setup_incomplete  windows/ exists but some window folder lacks its topology
     setup_failed      like the two above, and setup_failed.txt says why setup failed
-    needs_simulation  all windows built; some window lacks its production trajectory
-    needs_analysis    all window production trajectories exist; no results.json yet
+    needs_simulation  all windows built; some window is not finished (window_finished: done marker
+                      + production trajectory; an interrupted window has only a partial trajectory)
+    needs_analysis    every window finished; no results.json yet
     analyzed          results.json exists
 """
 import subprocess
@@ -164,7 +165,7 @@ def scan(dp):
         if (dp / FAILED_FILE).exists():
             return "setup_failed", []
         return ("setup_incomplete" if windows.is_dir() else "no_windows"), []
-    left = [w for w in WINDOWS if not (windows / w / TRAJECTORY).is_file()]
+    left = [w for w in WINDOWS if not window_finished(windows / w)]
     if left:
         return "needs_simulation", left
     return ("analyzed" if (dp / "results.json").exists() else "needs_analysis"), []
@@ -177,12 +178,9 @@ def window_finished(window_dir):
 
 
 def has_complete_run(dp):
-    """Whether every configured window has its production trajectory."""
-    dp = Path(dp)
-    windows = dp / "windows"
-    return windows.is_dir() and all(
-        (windows / window / TRAJECTORY).is_file() for window in WINDOWS
-    )
+    """Whether every configured window is finished (done marker + production trajectory)."""
+    windows = Path(dp) / "windows"
+    return windows.is_dir() and all(window_finished(windows / window) for window in WINDOWS)
 
 
 def mark_failed(dp, reason, file=FAILED_FILE):

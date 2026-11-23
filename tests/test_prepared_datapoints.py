@@ -11,7 +11,7 @@ from datapoints import WINDOWS, ensure_data_directories, has_complete_run
 
 
 class PreparedDataPointTests(unittest.TestCase):
-    def test_completed_run_requires_production_trajectory_in_every_window(self):
+    def test_completed_run_requires_a_finished_trajectory_in_every_window(self):
         trajectory = datapoints.CFG["analysis"]["trajectory"]
         with tempfile.TemporaryDirectory() as temporary_directory:
             data_point = Path(temporary_directory) / "prepared"
@@ -20,8 +20,11 @@ class PreparedDataPointTests(unittest.TestCase):
                 window_dir = windows_dir / window
                 window_dir.mkdir(parents=True)
                 (window_dir / trajectory).write_text("trajectory")
+                (window_dir / datapoints.DONE_MARKER).write_text("")
 
             self.assertTrue(has_complete_run(data_point))
+            (windows_dir / WINDOWS[-1] / datapoints.DONE_MARKER).unlink()   # interrupted: partial trajectory
+            self.assertFalse(has_complete_run(data_point))
             (windows_dir / WINDOWS[-1] / trajectory).unlink()
             self.assertFalse(has_complete_run(data_point))
 

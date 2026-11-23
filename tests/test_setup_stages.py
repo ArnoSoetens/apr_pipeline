@@ -9,6 +9,7 @@ from datapoints import (
     CLASH_PDB,
     COMPLEX_PDB,
     DONE,
+    DONE_MARKER,
     GUEST_FRCMOD,
     GUEST_MOL2,
     GUEST_PDB,
@@ -108,6 +109,9 @@ class SetupStageTests(unittest.TestCase):
         self.assertEqual(scan(dp), ("needs_simulation", list(WINDOWS)))
         for window in WINDOWS:
             (dp / "windows" / window / TRAJECTORY).write_text("x\n")
+        self.assertEqual(scan(dp), ("needs_simulation", list(WINDOWS)))   # interrupted: no done markers
+        for window in WINDOWS:
+            (dp / "windows" / window / DONE_MARKER).write_text("")
         self.assertEqual(scan(dp), ("needs_analysis", []))
         (dp / "results.json").write_text("{}\n")                  # analyzed, not cleaned up
         self.assertEqual(scan(dp), ("analyzed", []))

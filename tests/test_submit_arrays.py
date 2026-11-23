@@ -72,6 +72,7 @@ class StatusBySetupStageTests(unittest.TestCase):
                 (built / "windows" / window).mkdir(parents=True)
                 (built / "windows" / window / TOPOLOGY).write_text("x\n")
             (built / "windows" / WINDOWS[0] / TRAJECTORY).write_text("x\n")
+            (built / "windows" / WINDOWS[0] / "production2.done").write_text("")
             (built / FAILED_FILE).write_text("2026-11-20 10:00:00\nold\n")   # stale: setup is done
             point("junk", "notes.txt")
 

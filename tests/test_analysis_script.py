@@ -3,6 +3,7 @@
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apr_pipeline"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from datapoints import COMPLEX_PDB, GUEST_FRCMOD, GUEST_MOL2, GUEST_PDB, TOPOLOGY, TRAJECTORY, WINDOWS
+from datapoints import DONE_MARKER, COMPLEX_PDB, GUEST_FRCMOD, GUEST_MOL2, GUEST_PDB, TOPOLOGY, TRAJECTORY, WINDOWS
 from test_main_guard import temporary_project
 
 FAKE_APR_ANALYSIS = '''
@@ -65,6 +66,7 @@ class AnalysisScriptTests(unittest.TestCase):
                 (dp / "windows" / window / TOPOLOGY).write_text("x\n")
             if window in trajectories:
                 (dp / "windows" / window / TRAJECTORY).write_text("x\n")
+                (dp / "windows" / window / DONE_MARKER).write_text("")
         if results is not None:
             (dp / "results.json").write_text(json.dumps(results))
         return dp
@@ -99,7 +101,8 @@ class AnalysisScriptTests(unittest.TestCase):
         code, out = self.analysis("analyzed", "partial", "cleaned", "missing")
         self.assertEqual(code, 0, out)
         self.assertEqual(json.loads((self.data / "analyzed" / "results.json").read_text())["dG_bind"], -3.5)
-        self.assertIn(f"partial SKIPPED: not all windows have {TRAJECTORY} (1 missing, e.g. {WINDOWS[-1]})", out)
+        self.assertIn(f"partial SKIPPED: not all windows are finished ({TRAJECTORY} + {DONE_MARKER}; "
+                      f"1 missing, e.g. {WINDOWS[-1]})", out)
         self.assertIn("cleaned SKIPPED: cleaned up after analysis", out)
         self.assertIn("missing SKIPPED: no such data point folder", out)
         self.assertIn("analysis finished: 1 done, 0 failed, 3 skipped", out)
@@ -123,16 +126,23 @@ class AnalysisScriptTests(unittest.TestCase):
         code, out = self.analysis("fixed")
         self.assertFalse((self.data / "fixed" / "analysis_failed.txt").exists())
 
-    def test_enhanced_is_passed_on_and_no_collect_leaves_results_csv_alone(self):
+    def test_enhanced_follows_the_config_unless_overridden_and_no_collect(self):
         self.point("todo")
-        code, out = self.analysis("--enhanced", "--no-collect", "todo")
-        self.assertEqual(code, 0, out)
-        self.assertTrue(json.loads((self.data / "todo" / "results.json").read_text())["enhanced"])
+        config = self.data / "inputs" / "config.toml"
+        enhanced = lambda: json.loads((self.data / "todo" / "results.json").read_text())["enhanced"]
+        for value in ("true", "false"):
+            config.write_text(re.sub(r"(?m)^enhanced\s*=\s*\w+", f"enhanced = {value}", config.read_text()))
+            code, out = self.analysis("--no-collect", "todo")
+            self.assertEqual(code, 0, out)
+            self.assertEqual(enhanced(), value == "true")
         self.assertFalse(self.csv.exists())
 
-        code, out = self.analysis("todo")
-        self.assertFalse(json.loads((self.data / "todo" / "results.json").read_text())["enhanced"])
+        code, out = self.analysis("--enhanced", "todo")             # config says false
+        self.assertTrue(enhanced())
         self.assertTrue(self.csv.exists())
+        config.write_text(re.sub(r"(?m)^enhanced\s*=\s*\w+", "enhanced = true", config.read_text()))
+        code, out = self.analysis("--no-enhanced", "todo")
+        self.assertFalse(enhanced())
 
     def test_clean_after_analysis_cleans_the_analyzed_point(self):
         dp = self.point("todo")
@@ -158,16 +168,16 @@ class AnalysisScriptTests(unittest.TestCase):
 
 
 class AnalysisConfigTests(unittest.TestCase):
-    def test_old_plot_keys_are_ignored_and_results_csv_sits_in_the_data_folder(self):
+    def test_convergence_plot_key_is_ignored_and_results_csv_sits_in_the_data_folder(self):
         import apr_config
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data = temporary_project(root)
             config = data / "inputs" / "config.toml"
             config.write_text(config.read_text().replace(
-                "[analysis]", "[analysis]\nenhanced = true\nconvergence_plot = false", 1))
+                "[analysis]", "[analysis]\nconvergence_plot = false", 1))
             cfg = apr_config.load_config(config)
-        self.assertNotIn("enhanced", cfg["analysis"])
+        self.assertIs(cfg["analysis"]["enhanced"], True)          # analysis.enhanced is a config setting again
         self.assertNotIn("convergence_plot", cfg["analysis"])
         self.assertEqual(Path(cfg["analysis"]["results_csv"]), data / "inputs" / "results.csv")
 

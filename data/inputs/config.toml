@@ -107,7 +107,10 @@ rk3 = 100.0               # right parabolic force constant (kcal/mol/A^2)
 # plus rim_offset and parabolic_width.
 
 # ---------------------------------------------------------------------------
-[analysis]                   # extra plots: scripts/analysis.py --enhanced
+[analysis]
+enhanced         = true           # true: also the convergence plot, attach-window grid, pull-window
+                                  # histograms and extra metadata (analysis.py --enhanced/--no-enhanced
+                                  # overrides it for one run); false: results.json + binding plot, faster
 method           = "ti"           # primary plot/overall result; both TI and MBAR are analyzed
 bootstrap_cycles = 1000
 trajectory       = "production.nc"   # file read from every window
@@ -160,3 +163,10 @@ setup_minutes_per_data_point = 2
 analysis_data_points_per_task   = 1
 analysis_minutes_per_data_point = 2
 analysis_mem                    = "4G"
+
+# Guest-only runs (submit_arrays.py implicit): run_implicit.py on a few data points per task,
+# implicit_cpus of them at the same time.
+implicit_cpus                   = 1
+implicit_data_points_per_task   = 1
+implicit_minutes_per_data_point = 10
+implicit_mem                    = "1G"

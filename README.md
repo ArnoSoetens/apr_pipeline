@@ -308,7 +308,16 @@ python scripts/submit_arrays.py all --submit      # submits setup -> simulation 
 python scripts/submit_arrays.py all --batches 6 --submit
 python scripts/submit_arrays.py all --batches 6 --clean-after-analysis --submit
 python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller packages for a small job
+python scripts/submit_arrays.py implicit --implicit-only --p000 --submit   # guest-only runs
 ```
+
+Each array task takes its lines of the worklist (task k: lines k*N+1 ... k*N+N) and hands them
+to the same script you would run locally: setup -> `main.py <names>`, analysis ->
+`analysis.py --no-collect <names>`, implicit -> `run_implicit.py --cpus <slurm CPUs> <flags> <names>`,
+simulation -> `run.sh` on the window folders. The scripts skip what is not ready and say why.
+A simulation task runs **no Python at all**: `submit_arrays.py` writes the Amber `.in` files and
+`data/inputs/run.env` (data folder, pmemd command, ...) when submitting, and the task only uses
+bash and pmemd, so a slow shared file system can't break Python start-up in the most numerous tasks.
 
 * `status` sorts the data points by the setup stage they still need (the same rule
   `main.py` uses), lists the ones whose setup failed with the stage and reason, then
@@ -328,6 +337,9 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
 
   `setup` submits exactly the points listed under "setup" (failed ones only with
   `--retry-failed`). A `setup_failed.txt` in a point whose setup is complete is ignored.
+  Below that, only when there are any: windows that failed last time (`run_failed.txt`, with
+  step and exit code; `sim` simply runs them again), points whose analysis failed
+  (`analysis_failed.txt`, with the reason) and the guest-only runs done/failed per kind.
 * Every window that still has to be simulated goes into one list (`iso_00001/a000`, ...).
   By default, the script calculates windows per CPU from `slurm.sim_task_hours` and
   `slurm.sim_minutes_per_window`, reserving 25% of the task time. For example, 4 hours and
@@ -336,6 +348,9 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   `--windows-per-task` to override the calculated package size.
 * More tasks than `max_array_size` are split over several arrays (each with an offset into the list).
 * A finished window gets a `production2.done` file; resubmitting only puts unfinished windows in the list.
+  A window counts as finished only with that marker **and** `production.nc`: an interrupted window
+  (partial trajectory, no marker) is simulated again and is never analyzed.
+* Analysis tasks make the extra plots when `analysis.enhanced = true` in `data/inputs/config.toml`.
 * Analysis defaults to one data point per task and `analysis_mem` of `4G` in `data/inputs/config.toml`.
   This avoids retaining PyMBAR/JAX memory across several analyses in one Python process.
   Override the task size with `--points-per-task` or adjust `analysis_mem` for the cluster.
@@ -352,6 +367,10 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
   followed by its analysis array. The next batch's simulations wait for the previous batch's analysis
   tasks to end, but still run if an analysis task fails.
   `N=1` keeps the single-batch workflow. All windows belonging to one data point stay in the same batch.
+* `implicit` submits `run_implicit.py` for parametrized points without the requested finished runs
+  (`--implicit-only`, `--p000` or both; `--clean` keeps only what is needed). Task size and resources:
+  `slurm.implicit_data_points_per_task`, `implicit_cpus` (points at a time), `implicit_minutes_per_data_point`,
+  `implicit_mem`.
 * `--clean-after-analysis` is opt-in. After a data point analyzes successfully, its transient files
   are removed, with the same rules as `scripts/cleanup.py` (below). With `--clean-after-analysis` in
   `all`, a finalizer removes that batch's simulation and analysis array output logs only after those
@@ -384,13 +403,15 @@ python scripts/submit_arrays.py sim --windows-per-task 8 --submit    # smaller p
 python scripts/analysis.py                      # every fully simulated point without results.json
 python scripts/analysis.py iso_00001 PFBA_m_up  # these (again, if they were analyzed before)
 python scripts/analysis.py iso_00001-iso_00010  # a range;  --list todo.txt reads names from a file
-python scripts/analysis.py --enhanced ...       # also the convergence plot, attach grid, pull histograms
+python scripts/analysis.py --enhanced ...       # with the convergence plot, attach grid, pull histograms
+python scripts/analysis.py --no-enhanced ...    # without them
 ```
 
-Each data point gets `results.json` and `plots/binding_free_energy.jpg`. With
-`--enhanced` also `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg`,
+The default for both is `analysis.enhanced` in `data/inputs/config.toml` (`true`: with the extras).
+
+Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhanced adds `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg`,
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
-(`method`, `attach_fractions`, `pull_distances`). Without `--enhanced` the free
+(`method`, `attach_fractions`, `pull_distances`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions
 the convergence plot needs, so the analysis is faster. The calculation is the
 same: MBAR, the reference-state work and the wall/threshold diagnostics come out

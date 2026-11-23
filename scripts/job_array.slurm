@@ -1,6 +1,6 @@
 #!/bin/bash
 # Shared by all array jobs. submit_arrays.py passes Slurm resources and stage arguments.
-#   job_array.slurm setup|sim|analysis <worklist> <items_per_task> [offset]
+#   job_array.slurm setup|sim|analysis|implicit <worklist> <items_per_task> <offset> [...]
 #   job_array.slurm collect
 set -euo pipefail
 
@@ -46,7 +46,10 @@ wait_for_python() {
     echo "ERROR: Python environment is not usable on $(hostname)" >&2
     return 1
 }
-wait_for_python
+# the simulation tasks run only bash and pmemd (array_task.sh sim): no Python to wait for
+if [ "$1" != "sim" ]; then
+    wait_for_python
+fi
 
 # -------------------------------
 # AmberTools26
@@ -68,9 +71,11 @@ fi
 
 echo "===== $(date '+%F %T') on $(hostname), stage: $1 ====="
 echo "AMBERHOME=$AMBERHOME"
-command -v python
-command -v antechamber
-command -v sqm
+if [ "$1" != "sim" ]; then
+    command -v python
+    command -v antechamber
+    command -v sqm
+fi
 command -v pmemd || true
 
 # submit_arrays.py sets the working directory to scripts/.

@@ -7,6 +7,7 @@
     python submit_arrays.py all --submit           # setup -> simulations -> analysis -> results.csv
     python submit_arrays.py sim --submit           # only the simulations
     python submit_arrays.py analysis --submit      # only the analysis
+    python submit_arrays.py implicit --p000 --submit   # guest-only runs (--implicit-only and/or --p000)
 
 Setup
     If no data point folders exist yet, they are created from the configured SMILES list.
@@ -19,18 +20,25 @@ Simulation
     Every window that still has to be simulated goes into ONE list (lines like iso_00001/a000).
     The list is cut into work packages sized to fit within sim_task_hours, leaving a 25% runtime
     reserve. One array task runs one package on sim_cpus CPUs, one window per CPU at a time.
-    More tasks than max_array_size are split over several arrays.
+    More tasks than max_array_size are split over several arrays. The Amber .in files and run.env
+    are written into data/inputs/ when submitting, so a simulation task runs only bash and pmemd
+    (run.sh), no Python.
 Analysis
     The data points that are (or will be) fully simulated, a few per task. The analysis
     starts after the simulation arrays finish; data points with unfinished windows are skipped.
+    analysis.enhanced in config.toml decides whether the extra plots are made.
     `all --batches N` runs N sequential simulation/analysis batches after one setup array.
     Cleanup can be enabled per data point after its analysis succeeds.
+Guest-only runs (implicit)
+    Parametrized data points without the requested finished run, a few per task (slurm.implicit_*);
+    each task runs run_implicit.py on them, implicit_cpus at the same time.
 
 Options:
     --windows-per-task N    size of a simulation work package (default: calculated from sim_task_hours)
     --points-per-task N     data points per setup or analysis task (default: from config.toml)
     --batches N             `all`: sequential batch count (default: 1)
     --clean-after-analysis   `all`: delete transient files after successful analysis
+    --implicit-only, --p000  implicit: which guest-only runs;  --clean: keep only what is needed
     --retry-failed          setup: include data points that failed before
     --only NAME ...         only these data points, e.g. --only iso_00001 iso_00002
 
@@ -51,7 +59,9 @@ sys.path.insert(0, os.path.join(script_dir, "..", "apr_pipeline"))
 from apr_config import CFG
 from datapoints import (
     DATA,
+    ANALYSIS_FAILED_FILE,
     FAILED_FILE,
+    RUN_FAILED_FILE,
     STAGES,
     WINDOWS,
     all_data_points,
@@ -64,6 +74,7 @@ from datapoints import (
 
 LOGS = Path(CFG["directories"]["logs"])
 SL = CFG["slurm"]
+RUN_ENV = Path(CFG["directories"]["inputs"]) / "run.env"    # written by run_inputs.write_inputs()
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +209,7 @@ def submit_sim(window_list, package, do_submit, stamp, show_hint=True, dependenc
         print(f"  array {k + 1}/{len(arrays)}: tasks {offset}-{offset + size - 1}")
         job_name = f"sim_b{batch_number:02d}" if batch_number is not None else "sim"
         cmd = sbatch(job_name, limit, SL["sim_cpus"], f"--mem-per-cpu={SL['sim_mem_per_cpu']}",
-                     ["sim", worklist, package, offset], array=(size, offset), dependency=dependency)
+                     ["sim", worklist, package, offset, RUN_ENV], array=(size, offset), dependency=dependency)
         ids.append(run_sbatch(cmd, do_submit, f"<sim_job_{k + 1}>"))
     return ids
 
@@ -207,18 +218,26 @@ def points_resources(stage):
     """(cpus, memory flag) of the stages that work on whole data points."""
     if stage == "setup":
         return SL["setup_cpus"], f"--mem-per-cpu={SL['setup_mem']}"
+    if stage == "implicit":
+        return SL["implicit_cpus"], f"--mem-per-cpu={SL['implicit_mem']}"
     return 1, f"--mem-per-cpu={SL['analysis_mem']}"
 
 
 def points_time(stage, per_task):
     if stage == "setup":
         return hhmmss(per_task * SL["setup_minutes_per_data_point"] * 1.5 + 10)
+    if stage == "implicit":            # implicit_cpus points at a time
+        rounds = math.ceil(per_task / SL["implicit_cpus"])
+        return hhmmss(rounds * SL["implicit_minutes_per_data_point"] * 1.5 + 10)
     return hhmmss(per_task * SL["analysis_minutes_per_data_point"] * 2 + 5)
 
 
 def submit_points(stage, names, per_task, dependency, do_submit, stamp, batch_number=None,
-                  clean_after_analysis=False):
-    """Array with one worklist line per data point: setup and analysis."""
+                  clean_after_analysis=False, extra=()):
+    """Array with one worklist line per data point: setup, analysis and implicit.
+
+    extra: flags passed on to the stage's script (array_task.sh puts them before the names).
+    """
     per_task = max(1, per_task)
     if math.ceil(len(names) / per_task) > SL["max_array_size"]:
         per_task = math.ceil(len(names) / SL["max_array_size"])
@@ -235,7 +254,7 @@ def submit_points(stage, names, per_task, dependency, do_submit, stamp, batch_nu
     if do_submit:
         LOGS.mkdir(parents=True, exist_ok=True)
         worklist.write_text("\n".join(names) + "\n")
-    stage_args = [stage, worklist, per_task, 0]
+    stage_args = [stage, worklist, per_task, 0, *extra]
     if clean_after_analysis:
         stage_args.append("--clean-after-analysis")
     job_name = f"{stage}_b{batch_number:02d}" if batch_number is not None else stage
@@ -329,6 +348,33 @@ def show_status(dps, only=None):
     if not by_state:
         print("               none set up yet")
     print(f"  windows still to simulate: {windows_left}")
+
+    # what failed last time (each file is removed again by the next successful run)
+    run_failed = sorted(p for dp in dps for p in (dp / "windows").glob(f"*/{RUN_FAILED_FILE}"))
+    if run_failed:
+        print(f"  {len(run_failed):6d}  window(s) failed last time  ({RUN_FAILED_FILE}; 'sim' runs them again)")
+        for path in run_failed[:3]:
+            fields = dict(line.split(": ", 1) for line in path.read_text().splitlines() if ": " in line)
+            print(f"              {path.parent.parent.parent.name}/{path.parent.name}: "
+                  f"{fields.get('step', '?')}, exit code {fields.get('exit code', '?')}")
+    analysis_failed = [dp.name for dp in dps if (dp / ANALYSIS_FAILED_FILE).is_file()]
+    line(analysis_failed, f"analysis failed last time  ({ANALYSIS_FAILED_FILE})")
+    for name in analysis_failed[:3]:
+        print(f"              {name}: {failure_reason(DATA / name, file=ANALYSIS_FAILED_FILE)}")
+
+    import implicit
+    runs = {run: ([], []) for run in implicit.RUNS}
+    for dp in dps:
+        for run, (done, failed_runs) in runs.items():
+            if implicit.finished(dp, run):
+                done.append(dp.name)
+            elif (implicit.run_dir(dp, run) / RUN_FAILED_FILE).is_file():
+                failed_runs.append(dp.name)
+    if any(done or failed_runs for done, failed_runs in runs.values()):
+        print("  guest-only runs (run_implicit.py, 'implicit --submit')")
+        for run, (done, failed_runs) in runs.items():
+            line(done, f"{run} done")
+            line(failed_runs, f"{run} failed last time ({RUN_FAILED_FILE})")
     if unrecognized:
         print("  not a data point")
         line(unrecognized, "folders without input any stage recognizes (no .smi or guest PDB)")
@@ -350,19 +396,27 @@ def split_batches(names, batch_count):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", choices=["status", "setup", "sim", "analysis", "all"])
+    ap.add_argument("command", choices=["status", "setup", "sim", "analysis", "all", "implicit"])
     ap.add_argument("--submit", action="store_true", help="really submit (default: only show)")
     ap.add_argument("--windows-per-task", type=int, help="size of a simulation work package")
-    ap.add_argument("--points-per-task", type=int, help="data points per setup or analysis task")
+    ap.add_argument("--points-per-task", type=int, help="data points per setup, analysis or implicit task")
     ap.add_argument("--batches", type=int, default=1,
                     help="all: sequential simulation/analysis batches (default: 1)")
     ap.add_argument("--clean-after-analysis", action="store_true",
                     help="all/analysis: clean transient files after successful analysis")
     ap.add_argument("--retry-failed", action="store_true", help="setup: include data points that failed before")
+    ap.add_argument("--implicit-only", action="store_true", help="implicit: the free guest")
+    ap.add_argument("--p000", action="store_true", help="implicit: the guest alone in the p000 window")
+    ap.add_argument("--clean", action="store_true",
+                    help="implicit: keep only .prmtop, production.nc and the done marker of each run")
     ap.add_argument("--only", nargs="+", metavar="NAME")
     args = ap.parse_args()
     if args.batches < 1:
         ap.error("--batches must be at least 1")
+    implicit_runs = [name for name, wanted in (("implicit_only", args.implicit_only), ("implicit_p000", args.p000))
+                     if wanted]
+    if args.command == "implicit" and not implicit_runs:
+        ap.error("implicit: choose --implicit-only, --p000 or both")
 
     if args.command != "status":
         try:
@@ -373,6 +427,21 @@ def main():
     dps = all_data_points(args.only)
     if args.command == "status":
         show_status(dps, args.only)
+        return
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    if args.command == "implicit":
+        import implicit
+        names = [dp.name for dp in dps
+                 if not implicit.missing_inputs(dp) and not all(implicit.finished(dp, r) for r in implicit_runs)]
+        flags = [{"implicit_only": "--implicit-only", "implicit_p000": "--p000"}[run] for run in implicit_runs]
+        flags += ["--clean"] if args.clean else []
+        if names:
+            submit_points("implicit", names, args.points_per_task or SL["implicit_data_points_per_task"],
+                          None, args.submit, stamp, extra=flags)
+        else:
+            print("\n[implicit] nothing to run (no parametrized data point without a finished run)")
+        if not args.submit:
+            print("\nNothing was submitted. Add --submit to submit.")
         return
 
     window_list, analysis_names, setup_names, failed_names = [], [], [], []
@@ -409,7 +478,9 @@ def main():
         print(f"note: {len(failed_names)} setup-failed data point(s) are left out "
               f"(e.g. {', '.join(failed_names[:3])}); --retry-failed includes them")
 
-    stamp = time.strftime("%Y%m%d_%H%M%S")
+    if args.submit and window_list and args.command in ("sim", "all"):
+        from run_inputs import write_inputs
+        write_inputs()                   # data/inputs/*.in + run.env: the simulation tasks need no Python
     setup_ids = None
     if args.command == "setup":
         names = setup_names + (failed_names if args.retry_failed else [])

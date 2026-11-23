@@ -5,6 +5,7 @@
     python analysis.py iso_00001-iso_00010     a range;  --list todo.txt  the data points in a file
     python analysis.py --enhanced ...          also the convergence plot, the attach-window grid, the
                                                pull-window histograms and extra metadata in results.json
+    python analysis.py --no-enhanced ...       without those (the default is analysis.enhanced in config.toml)
 
 A data point that fails gets analysis_failed.txt (date and reason) and the loop goes on; a
 successful analysis removes it. At the end results.csv is rebuilt from every results.json
@@ -23,6 +24,7 @@ sys.path.insert(0, str(script_dir))
 from apr_config import CFG
 from datapoints import (
     ANALYSIS_FAILED_FILE,
+    DONE_MARKER,
     TOPOLOGY,
     TRAJECTORY,
     WINDOWS,
@@ -30,19 +32,21 @@ from datapoints import (
     clear_failed,
     mark_failed,
     scan,
+    window_finished,
 )
 from selection import add_selection_args, selected
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 add_selection_args(parser)
-parser.add_argument("--enhanced", action="store_true",
+parser.add_argument("--enhanced", action=argparse.BooleanOptionalAction, default=None,
                     help="also write the convergence plot, attach-window grid, pull-window histograms "
-                         "and extra metadata")
+                         "and extra metadata (default: analysis.enhanced in config.toml)")
 parser.add_argument("--clean-after-analysis", action="store_true",
                     help="remove transient files after each successful data-point analysis")
 parser.add_argument("--no-collect", action="store_true",
                     help="do not rebuild results.csv at the end")
 args = parser.parse_args()
+enhanced = CFG["analysis"]["enhanced"] if args.enhanced is None else args.enhanced
 
 
 def needing_analysis():
@@ -59,10 +63,10 @@ def why_not(dp):
         return f"no such data point folder: {dp}"
     if (dp / "results.json").is_file() and not all((windows / w / TOPOLOGY).is_file() for w in WINDOWS):
         return "cleaned up after analysis: its trajectories were removed"
-    missing = [w for w in WINDOWS if not (windows / w / TRAJECTORY).is_file()]
+    missing = [w for w in WINDOWS if not window_finished(windows / w)]
     if missing:
-        return (f"not all windows have {TRAJECTORY} "
-                f"({len(missing)} missing, e.g. {', '.join(missing[:3])})")
+        return (f"not all windows are finished ({TRAJECTORY} + {DONE_MARKER}; "
+                f"{len(missing)} missing, e.g. {', '.join(missing[:3])})")
     return None
 
 
@@ -88,7 +92,7 @@ for i, name in enumerate(names, 1):
         continue
 
     try:
-        out = apr_analysis.run(dp, enhanced=args.enhanced)
+        out = apr_analysis.run(dp, enhanced=enhanced)
     except Exception as e:
         reason = str(e) or type(e).__name__
         print(name, f"FAILED: {reason}", flush=True)

@@ -49,6 +49,7 @@ def run_settings():
     """The values run.sh reads from run.env."""
     run = CFG["run"]
     return {
+        "DATA_DIR": CFG["directories"]["data"],
         "PMEMD": get_pmemd_command(),
         "INPUT_DIR": CFG["directories"]["inputs"],
         "TOPOLOGY": f'{CFG["naming"]["complex_prefix"]}-dum',

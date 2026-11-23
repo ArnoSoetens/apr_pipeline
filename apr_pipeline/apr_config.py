@@ -139,6 +139,7 @@ def _validate(cfg):
     need(s["analysis_data_points_per_task"] >= 1, "slurm.analysis_data_points_per_task must be >= 1")
     need(s["setup_data_points_per_task"] >= 1 and s["setup_cpus"] >= 1, "slurm.setup_data_points_per_task and setup_cpus must be >= 1")
     need(an["method"] in METHODS, f"analysis.method must be one of {list(METHODS)}")
+    need(isinstance(an["enhanced"], bool), "analysis.enhanced must be true or false")
     need(r["pmemd"] in PMEMD_KINDS, f"run.pmemd must be one of {list(PMEMD_KINDS)}")
     functionalize = cfg["functionalize"]
     need(
@@ -202,9 +203,12 @@ def load_config(path=CONFIG_PATH):
     cfg["directories"] = directories(path.parent.parent,
                                      cfg.get("input", {}).get("smiles_list", "smiles.txt"))
 
-    # analysis.enhanced / analysis.convergence_plot: replaced by analysis.py --enhanced; ignored if present
-    cfg["analysis"].pop("enhanced", None)
+    # analysis.convergence_plot: part of analysis.enhanced now; ignored if present
     cfg["analysis"].pop("convergence_plot", None)
+    cfg["analysis"].setdefault("enhanced", False)
+    for key, value in (("implicit_cpus", 1), ("implicit_data_points_per_task", 1),
+                       ("implicit_minutes_per_data_point", 10), ("implicit_mem", "1G")):
+        cfg["slurm"].setdefault(key, value)
     cfg["analysis"].setdefault("results_csv", "inputs/results.csv")
     cfg["structure"].setdefault("output_pdb", f'{cfg["naming"]["guest_prefix"]}.pdb')
     walls = cfg["apr"]["restraints"].setdefault("walls", {})
