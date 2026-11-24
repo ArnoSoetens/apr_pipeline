@@ -479,13 +479,18 @@ The top-level `dG_bind` and `dG_sem` remain the values from the configured
 meaning. The configured method's plot profile is still used internally to draw
 `binding_free_energy.jpg`, but its per-window values are not repeated in JSON.
 
-With `--enhanced`, a data point also gets `plots/convergence_plot.jpg`, with separate attach and
-pull panels. Each panel shows the TI and MBAR phase free-energy estimates at
-10%, 20%, ..., 100% of each window's trajectory frames, with Paprika's
-fraction-specific SEM as error bars. Each fraction uses the first indicated
-portion of the available frames in every window. This lets you see whether the
-estimate settles toward its full-trajectory value; it is a diagnostic, not a
-proof that the simulation has sampled all relevant states.
+With `--enhanced`, a data point also gets `plots/convergence_plot.jpg`: one row for attach and one
+for pull. The left panel shows the TI-block free energy from the first ("forward") and from the
+last ("reverse") 10%, 20%, ..., 100% of every window's frames, with ±1 SEM. The right panel shows
+that SEM against the number of frames used on log-log axes, with an N^-1/2 line through the
+full-data point. Every SEM is a new blocking analysis of the frames used (pAPRika itself only
+rescales the full-data SEM, which would follow N^-1/2 by construction); dU, the blocking and the
+bootstrap/Akima integration are pAPRika's, so at 100% the value equals the `ti-block` result up to
+bootstrap noise. Forward and reverse should meet well before 100%; a gap at small fractions points
+to a not yet equilibrated start (forward) or a late drift (reverse). MBAR is left out: pAPRika's
+`mbar-autoc` SEM does not correct for autocorrelation (it passes the frame count instead of the
+time series to `detect_equilibration`, so g = 1), so its error bars are too small. It is a
+diagnostic, not a proof that the simulation has sampled all relevant states.
 
 `attach_distance_outside_threshold` contains the fraction and percent of
 attachment distance samples satisfying

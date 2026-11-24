@@ -9,6 +9,7 @@ import matplotlib
 matplotlib.use("Agg")                 # must come before importing pyplot
 import matplotlib.pyplot as plt
 
+from openff.units import unit as openff_unit
 from paprika import analysis
 from paprika.io import load_restraints, load_trajectory, read_restraint_data
 from paprika.restraints import create_window_list
@@ -424,34 +425,129 @@ def _phase_details(res, phase):
     }
 
 
-def convergence_plot(res, out_path):
-    """Plot phase free-energy estimates against the fraction of trajectory frames used."""
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=False)
-    for ax, phase in zip(axes, ("attach", "pull")):
-        for method in METHODS:
-            values = res[phase][method]
-            estimates = [float(_mag(values["fraction_fe"][fraction]))
-                         for fraction in CONVERGENCE_FRACTIONS]
-            errors = [float(_mag(values["fraction_sem"][fraction]))
-                      for fraction in CONVERGENCE_FRACTIONS]
-            ax.errorbar(
-                CONVERGENCE_FRACTIONS * 100,
-                estimates,
-                yerr=errors,
-                marker="o",
-                capsize=2,
-                label=method,
-            )
-        ax.set_title(f"{phase.capitalize()} phase")
-        ax.set_xlabel("Trajectory frames used (%)")
-        ax.set_ylabel("Free energy (kcal/mol)")
-        ax.set_xticks(CONVERGENCE_FRACTIONS * 100)
-        ax.grid(alpha=0.3)
-        ax.legend()
-    fig.suptitle("Free-energy convergence with trajectory sampling")
+def _ti_per_frame(prepared, phase):
+    """dU per frame and the integration variable per window, as pAPRika's run_ti builds them.
+
+    attach/release: dU = sum_r k_max,r (x_r - x0_r)^2 (kcal/mol), x-axis lambda = k / k_max of
+    the first restraint; pull: dU = sum_r 2 k_max,r (x_r - x0_r) (kcal/mol/Å), x-axis the
+    target of the first restraint. Units are those prepare_data converted to (Å, radians).
+    Dihedrals are wrapped around their target like pAPRika does. Nothing is modified in place.
+    Returns (x per window, list of dU arrays).
+    """
+    num_win, _, _, active, force_constants, targets, values = prepared
+    fcs = [np.asarray(f.magnitude, dtype=float) for f in force_constants]
+    tgs = [np.asarray(t.magnitude, dtype=float) for t in targets]
+    max_fcs = [float(np.max(f)) for f in fcs]
+    period = float((360.0 * openff_unit.degree).to(openff_unit.radian).magnitude)
+
+    dl_vals, dU = np.zeros(num_win), []
+    for k in range(num_win):
+        total = 0.0
+        for r, restraint in enumerate(active):
+            x = values[k][r]
+            if hasattr(x, "to"):
+                x = x.to(targets[r].units)
+            x = np.array(getattr(x, "magnitude", x), dtype=float)    # a copy
+            target = tgs[r][k]
+            if restraint.mask3 is not None and restraint.mask4 is not None:
+                x[x < target - period / 2] += period
+                x[x > target + period / 2] -= period
+            if phase == "pull":
+                total = total + 2.0 * max_fcs[r] * (x - target)
+            else:
+                total = total + max_fcs[r] * (x - target) ** 2
+        dU.append(np.asarray(total, dtype=float))
+        dl_vals[k] = tgs[0][k] if phase == "pull" else fcs[0][k] / max_fcs[0]
+    return dl_vals, dU
+
+
+def _ti_integral(dl_vals, means, sems, rng, cycles=BOOT_CYCLES):
+    """pAPRika's TI-block integral and SEM from window means and SEMs: bootstrap normal draws,
+    an Akima spline with 100 points per interval, and the [0, -1] element of its "full" matrix
+    (paprika.analysis.bootstrap.integrate_bootstraps)."""
+    from scipy.interpolate import Akima1DInterpolator
+
+    x_intp = np.concatenate(
+        [np.linspace(dl_vals[k - 1], dl_vals[k], num=100, endpoint=False)
+         for k in range(1, len(dl_vals))] + [[dl_vals[-1]]])
+    samples = rng.normal(means, sems, size=(cycles, len(means)))
+    end = len(x_intp) - 1                       # integrate_bootstraps stops before the last point
+    integrals = np.array([np.trapz(Akima1DInterpolator(dl_vals, y)(x_intp)[:end], x_intp[:end])
+                          for y in samples])
+    return float(np.mean(integrals)), float(np.std(integrals))
+
+
+def _block_sem(values):
+    """pAPRika's blocking SEM: max over block sizes, on the get_nearest_max(N) frames."""
+    from paprika.analysis.utils import get_block_sem, get_nearest_max
+
+    return float(get_block_sem(values[:get_nearest_max(len(values))]))
+
+
+def _convergence_curves(dl_vals, dU, phase, fractions=CONVERGENCE_FRACTIONS,
+                        cycles=BOOT_CYCLES, seed=0):
+    """TI estimate, SEM and total frames for the first ("forward") and last ("reverse")
+    fraction f of every window. The SEM is a new blocking analysis of each piece (pAPRika only
+    rescales the full-data SEM). The pull work gets pAPRika's minus sign."""
+    sign = -1.0 if phase == "pull" else 1.0
+    curves = {"fractions": np.asarray(fractions, dtype=float)}
+    for direction in ("forward", "reverse"):
+        fe, sem, frames = [], [], []
+        for i, fraction in enumerate(fractions):
+            parts = []
+            for window in dU:
+                m = int(fraction * len(window))
+                # reverse: the last m frames, newest first, so blocking drops the oldest ones
+                parts.append(window[:m] if direction == "forward" else window[::-1][:m])
+            means = np.array([np.mean(part) for part in parts])
+            sems = np.array([_block_sem(part) for part in parts])
+            value, error = _ti_integral(dl_vals, means, sems,
+                                        np.random.default_rng([seed, i]), cycles)
+            fe.append(sign * value)
+            sem.append(error)
+            frames.append(sum(len(part) for part in parts))
+        curves[direction] = {"fe": np.array(fe), "sem": np.array(sem), "frames": np.array(frames)}
+    return curves
+
+
+def convergence_plot(fe, out_path, phases=("attach", "pull"), fractions=CONVERGENCE_FRACTIONS,
+                     cycles=BOOT_CYCLES):
+    """TI-block free energy from the first (forward) and last (reverse) fraction of every window,
+    and the SEM against the number of frames on log-log axes with an N^-1/2 line.
+
+    One row per phase. Returns (figure, {phase: curves}).
+    """
+    styles = {"forward": dict(marker="o", color="tab:blue", label="forward (first f)"),
+              "reverse": dict(marker="s", color="tab:orange", label="reverse (last f)")}
+    fig, axes = plt.subplots(len(phases), 2, figsize=(12, 4.5 * len(phases)), squeeze=False)
+    all_curves = {}
+    for row, phase in zip(axes, phases):
+        dl_vals, dU = _ti_per_frame(fe.prepare_data(phase), phase)
+        curves = all_curves[phase] = _convergence_curves(dl_vals, dU, phase, fractions, cycles)
+        percent = curves["fractions"] * 100
+        for direction, offset in (("forward", 0.0), ("reverse", 0.8)):
+            c = curves[direction]
+            row[0].errorbar(percent + offset, c["fe"], yerr=c["sem"], capsize=2, **styles[direction])
+            row[1].loglog(c["frames"], c["sem"], **styles[direction])
+        full = curves["forward"]
+        reference = full["sem"][-1] * np.sqrt(full["frames"][-1] / full["frames"])
+        row[1].loglog(full["frames"], reference, "k--", linewidth=1, label=r"$\propto N^{-1/2}$")
+
+        row[0].set_title(f"{phase.capitalize()} phase (TI-block)")
+        row[0].set_xlabel("Trajectory frames used per window (%)")
+        row[0].set_ylabel("Free energy ± 1 SEM (kcal/mol)")
+        row[0].set_xticks(percent)
+        row[1].set_title(f"{phase.capitalize()} phase: SEM vs frames")
+        row[1].set_xlabel("Frames used (all windows)")
+        row[1].set_ylabel("SEM (kcal/mol)")
+        for ax in row:
+            ax.grid(alpha=0.3, which="both")
+            ax.legend(fontsize=8)
+    fig.suptitle("Free-energy convergence: forward and reverse")
     fig.tight_layout()
     fig.savefig(out_path, dpi=300)
     plt.close(fig)
+    return fig, all_curves
 
 
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
@@ -508,7 +604,7 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
     dg, dg_sem = float(binding_affinity.magnitude), float(sem.magnitude)
 
     if convergence_path:
-        convergence_plot(res, convergence_path)
+        convergence_plot(fe, convergence_path)
 
     x_pull = pull_distances - initial_distance + attach_fractions[-1]
     attach_window_count = len(attach_fractions) - 1
