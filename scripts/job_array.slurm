@@ -31,25 +31,8 @@ if [ ! -d "$ENV_DIR" ]; then
     exit 1
 fi
 export PATH="$ENV_DIR/bin:$PATH"
-
-# Retry the Python environment check in case the shared filesystem is slow.
-wait_for_python() {
-    local attempt
-    for attempt in 1 2 3 4 5; do
-        if python -c "import numpy, tomllib" 2>/dev/null; then
-            return 0
-        fi
-        echo "Python environment not ready (attempt $attempt of 5); retrying" >&2
-        sleep $(( RANDOM % 20 + 5 ))
-    done
-
-    echo "ERROR: Python environment is not usable on $(hostname)" >&2
-    return 1
-}
-# the simulation tasks run only bash and pmemd (array_task.sh sim): no Python to wait for
-if [ "$1" != "sim" ]; then
-    wait_for_python
-fi
+# array_task.sh recognizes shared-filesystem errors by these paths
+export ENV_DIR AMBERTOOLS_HOME
 
 # -------------------------------
 # AmberTools26
@@ -77,6 +60,46 @@ if [ "$1" != "sim" ]; then
     command -v sqm
 fi
 command -v pmemd || true
+
+# -------------------------------
+# Python environment check
+# -------------------------------
+# Under load the shared filesystem sometimes reports files of the environment as missing
+# (another file each time; a retry works). Import what this stage's Python will import, retrying
+# a few times, so most of those errors happen here instead of in the middle of the stage.
+# array_task.sh also reruns a script that still runs into one.
+case "$1" in
+    setup)    CHECK_MODULES=(setup_runner structure placement parametrize apr_setup) ;;
+    analysis) CHECK_MODULES=(apr_analysis) ;;
+    implicit) CHECK_MODULES=(implicit) ;;
+    collect)  CHECK_MODULES=(collect_results) ;;
+    *)        CHECK_MODULES=() ;;          # sim runs only bash and pmemd; cleanup_logs is light
+esac
+
+wait_for_python() {
+    local attempt error
+    for attempt in 1 2 3 4 5; do
+        # sys.path as the scripts set it up: apr_pipeline/ and scripts/ (the working directory)
+        if error=$(python -c '
+import importlib, sys
+sys.path[:0] = [sys.argv[1] + "/../apr_pipeline", sys.argv[1]]
+import numpy, tomllib
+for name in sys.argv[2:]:
+    importlib.import_module(name)
+' "$PWD" "${CHECK_MODULES[@]}" 2>&1); then
+            return 0
+        fi
+        echo "Python environment not ready (attempt $attempt of 5): $(tail -n 1 <<< "$error")" >&2
+        sleep $(( RANDOM % 20 + 5 ))
+    done
+
+    echo "ERROR: Python environment is not usable on $(hostname); last error:" >&2
+    echo "$error" >&2
+    return 1
+}
+if [ "$1" != "sim" ]; then
+    wait_for_python
+fi
 
 # submit_arrays.py sets the working directory to scripts/.
 bash "$PWD/array_task.sh" "$@"

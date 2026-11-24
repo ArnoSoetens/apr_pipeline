@@ -15,13 +15,80 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAGE="${1:?stage: setup, sim, analysis, implicit, collect or cleanup_logs}"
 
+# --- Rerun after shared-filesystem errors --------------------------------------------------------
+# Under load, the shared filesystem sometimes reports a file of the Python environment or of
+# AmberTools as missing ("No such file or directory"; another file each time, a rerun works).
+# run_retrying runs a Python script, keeps a copy of its output and reruns it when that went wrong:
+#   - the script stopped with an error and its output names such a file (e.g. during an import):
+#     run it again with all its items;
+#   - it finished, but some items FAILED naming such a file: run it again for those items only.
+# Any other failure is left as it is. ENV_DIR and AMBERTOOLS_HOME come from job_array.slurm.
+MAX_ATTEMPTS=3
+OUTPUT_COPY=""            # temporary file, made by run_retrying (the sim stage does not need one)
+
+filesystem_errors() {     # the output lines that name a missing environment or AmberTools file
+    grep -F "No such file or directory" "$OUTPUT_COPY" \
+        | grep -F -e "${ENV_DIR:?set by job_array.slurm}/" -e "${AMBERTOOLS_HOME:?set by job_array.slurm}/" \
+        || true
+}
+
+#   run_retrying COMMAND ... [-- ITEM ...]     items: the data points (worklist lines) it works on
+run_retrying() {
+    local command=() items=() retry=() attempt rc errors item line
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+        command+=("$1")
+        shift
+    done
+    [ "$#" -gt 0 ] && shift
+    items=("$@")
+    if [ -z "$OUTPUT_COPY" ]; then
+        OUTPUT_COPY="$(mktemp)"           # in $TMPDIR (Slurm's per-job folder) or /tmp
+        trap 'rm -f "$OUTPUT_COPY"' EXIT
+    fi
+
+    for (( attempt = 1; ; attempt++ )); do
+        if "${command[@]}" "${items[@]}" 2>&1 | tee "$OUTPUT_COPY"; then rc=0; else rc=$?; fi
+        errors="$(filesystem_errors)"
+        if [ -z "$errors" ]; then
+            return "$rc"
+        fi
+        if [ "$rc" -ne 0 ]; then
+            retry=("${items[@]}")
+        else
+            # failed items print "<item> FAILED ..." or "<item>/<run> FAILED ..."
+            retry=()
+            for item in "${items[@]}"; do
+                while IFS= read -r line; do
+                    if [[ ( "$line" == "$item "* || "$line" == "$item/"* ) && "$line" == *FAILED* ]]; then
+                        retry+=("$item")
+                        break
+                    fi
+                done <<< "$errors"
+            done
+            if [ "${#retry[@]}" -eq 0 ]; then
+                return 0
+            fi
+        fi
+        if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+            echo "SHARED-FILESYSTEM ERROR still there after $attempt attempts, giving up:" >&2
+            echo "$errors" >&2
+            return "$rc"
+        fi
+        echo "SHARED-FILESYSTEM ERROR (attempt $attempt of $MAX_ATTEMPTS):" >&2
+        echo "$errors" >&2
+        echo "running again${retry[*]:+ for: ${retry[*]}}" >&2
+        items=("${retry[@]}")
+        sleep $(( RANDOM % 30 + 10 ))
+    done
+}
+
 if [ "$STAGE" = "collect" ]; then
-    python "$SCRIPT_DIR/collect_results.py"
+    run_retrying python "$SCRIPT_DIR/collect_results.py"
     exit 0
 fi
 if [ "$STAGE" = "cleanup_logs" ]; then
     shift
-    python "$SCRIPT_DIR/cleanup_batch_logs.py" "$@"
+    run_retrying python "$SCRIPT_DIR/cleanup_batch_logs.py" "$@"
     exit 0
 fi
 
@@ -47,7 +114,7 @@ fi
 
 case "$STAGE" in
     setup)
-        python "$SCRIPT_DIR/main.py" "${POINTS[@]}"
+        run_retrying python "$SCRIPT_DIR/main.py" -- "${POINTS[@]}"
         ;;
     sim)
         RUN_ENV="${EXTRA[0]:?sim needs the run.env file}"
@@ -67,10 +134,11 @@ case "$STAGE" in
         ;;
     analysis)
         # --no-collect: the collect job builds results.csv once all analysis tasks have ended
-        python "$SCRIPT_DIR/analysis.py" --no-collect "${EXTRA[@]}" "${POINTS[@]}"
+        run_retrying python "$SCRIPT_DIR/analysis.py" --no-collect "${EXTRA[@]}" -- "${POINTS[@]}"
         ;;
     implicit)
-        python "$SCRIPT_DIR/run_implicit.py" --cpus "${SLURM_CPUS_PER_TASK:-1}" "${EXTRA[@]}" "${POINTS[@]}"
+        run_retrying python "$SCRIPT_DIR/run_implicit.py" --cpus "${SLURM_CPUS_PER_TASK:-1}" "${EXTRA[@]}" \
+            -- "${POINTS[@]}"
         ;;
     *)
         echo "unknown stage: $STAGE" >&2

@@ -28,3 +28,6 @@ env/
 # Other
 *.mjs
 other/
+
+# Archives (too large for GitHub)
+*.tar.gz

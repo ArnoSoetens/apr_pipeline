@@ -13,7 +13,7 @@
 
 # ---------------------------------------------------------------------------
 [input]
-smiles_list = "test_wall.txt"    # SMILES list in data/inputs/, one per line; only read when the
+smiles_list = "wall.txt"    # SMILES list in data/inputs/, one per line; only read when the
                                  # data folder has no data point folders yet
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ static_fc              = [10.0, 100.0, 100.0, 100.0, 100.0, 100.0]   # the six h
 host_conformational_fc = 10.0     # per-glucose conformational restraints
 
 [apr.restraints.walls.distance]
-enabled = true
+enabled = false
 mode = "rim"             # "manual" uses r1-r4 below; "rim" derives r2/r3 from the fitted rims
 rim_atom_groups = [
     [10, 31, 52, 73, 94, 115, 136],
@@ -110,7 +110,7 @@ rk3 = 100.0               # right parabolic force constant (kcal/mol/A^2)
 # Flat-bottom D2-D1-G1 angle wall (attach windows only): no force from 180 degrees down to the
 # angle of the rim nearest DM1 (mean D2-D1-O over its oxygens from walls.distance.rim_atom_groups,
 # which it needs even when the distance wall is manual or off), harmonic below that.
-enabled = true
+enabled = false
 angle_offset = 0.0        # degrees; > 0 widens the cone beyond the rim oxygens, < 0 narrows it
 parabolic_width = 5.0     # degrees between r1 and r2 (linear beyond r1)
 rk2 = 100.0               # kcal/mol/rad^2
@@ -156,8 +156,8 @@ max_array_size = 1000        # tasks per array (cluster maximum: 1001); more tas
 
 # Simulation: every window that still has to be simulated goes into ONE list. The list is cut into
 # work packages; one array task runs one package on sim_cpus CPUs, one window per CPU at a time.
-sim_cpus               = 1      # CPUs requested per task
-sim_task_hours         = 4      # max task time; default package size reserves 25% for longer-than-estimated windows
+sim_cpus               = 4      # CPUs requested per task
+sim_task_hours         = 0.5      # max task time; default package size reserves 25% for longer-than-estimated windows
 sim_minutes_per_window = 5      # estimated runtime per window; 4 hours and 5 min/window -> 36 windows per CPU
 sim_mem_per_cpu        = "1G"
 
@@ -171,7 +171,7 @@ setup_minutes_per_data_point = 2
 # Analysis: isolate data points so JAX/PyMBAR memory is reclaimed between tasks.
 analysis_data_points_per_task   = 1
 analysis_minutes_per_data_point = 2
-analysis_mem                    = "4G"
+analysis_mem                    = "2G"
 
 # Guest-only runs (submit_arrays.py implicit): run_implicit.py on a few data points per task,
 # implicit_cpus of them at the same time.
