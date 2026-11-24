@@ -132,6 +132,30 @@ def _validate(cfg):
             "positive distance in rim mode",
         )
 
+    def finite_number(value):
+        return (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value))
+
+    cone = a["restraints"]["walls"]["cone"]
+    need(isinstance(cone["enabled"], bool),
+         "apr.restraints.walls.cone.enabled must be true or false")
+    need(finite_number(cone["angle_offset"]),
+         "apr.restraints.walls.cone.angle_offset must be a finite number of degrees")
+    for key in ("parabolic_width", "rk2"):
+        need(finite_number(cone[key]) and cone[key] > 0,
+             f"apr.restraints.walls.cone.{key} must be a finite positive number")
+    if cone["enabled"]:
+        rim_groups = wall.get("rim_atom_groups")
+        need(
+            isinstance(rim_groups, list)
+            and len(rim_groups) == 2
+            and all(isinstance(group, list) and len(group) == 7
+                    and all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in group)
+                    for group in rim_groups),
+            "apr.restraints.walls.cone needs apr.restraints.walls.distance.rim_atom_groups "
+            "(two groups of 7 host oxygen numbers), also when the distance wall is manual or off",
+        )
+
     s = cfg["slurm"]
     need(s["max_array_size"] <= 1001, "slurm.max_array_size is above the cluster maximum (1001)")
     need(s["sim_cpus"] >= 1, "slurm.sim_cpus must be >= 1")
@@ -224,6 +248,11 @@ def load_config(path=CONFIG_PATH):
     if distance_wall["mode"] == "rim":
         distance_wall.setdefault("rim_offset", 1.0)
         distance_wall.setdefault("parabolic_width", 1.0)
+    cone_wall = walls.setdefault("cone", {})
+    cone_wall.setdefault("enabled", False)
+    cone_wall.setdefault("angle_offset", 0.0)
+    cone_wall.setdefault("parabolic_width", 5.0)
+    cone_wall.setdefault("rk2", 100.0)
     csv = cfg["analysis"]["results_csv"]              # relative to the data directory, so that
     cfg["analysis"]["results_csv"] = str((Path(cfg["directories"]["data"]) / csv).resolve())  # data/ holds it
 

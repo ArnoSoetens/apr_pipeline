@@ -240,5 +240,67 @@ class WallRestraintTests(unittest.TestCase):
         self.assertEqual(walls, [])
 
 
+def cone_test_structure():
+    """Rims of radius 5 at z=-1 (5 A above DM1) and z=4 (10 A above), DM2 at z=-9."""
+    structure = wall_test_structure()
+    atom = Atom(name="DUM", atomic_number=6, mass=12.0)
+    atom.xx = atom.xy = 0.0
+    atom.xz = -9.0
+    structure.add_atom(atom, "DM2", 1)
+    return structure
+
+
+def cone_walls(offset=0.0, enabled=True, structure=None):
+    walls = {
+        "distance": {"rim_atom_groups": [list(range(1, 8)), list(range(8, 15))]},
+        "cone": {"enabled": enabled, "angle_offset": offset, "parabolic_width": 5.0, "rk2": 100.0},
+    }
+    with (
+        patch.object(apr_setup, "WALLS", walls),
+        patch.object(apr_setup.restraints, "DAT_restraint", FakeRestraint),
+    ):
+        return apr_setup.create_cone_wall(
+            structure or cone_test_structure(), ":DM1", ":DM2", ":UNL@15", 3
+        )
+
+
+class ConeWallTests(unittest.TestCase):
+    def bounds(self, wall):
+        return tuple(wall.custom_restraint_values[key] for key in ("r1", "r2", "r3", "r4"))
+
+    def test_cone_passes_through_the_near_rim_oxygens(self):
+        (wall,) = cone_walls()
+        r2 = 180.0 - 45.0          # radius 5 at 5 A above DM1
+        np.testing.assert_allclose(self.bounds(wall), (r2 - 5.0, r2, 180.0, 180.0))
+        self.assertEqual((wall.mask1, wall.mask2, wall.mask3), (":DM2", ":DM1", ":UNL@15"))
+        self.assertEqual(wall.custom_restraint_values["rk2"], 100.0)
+        self.assertEqual(wall.attach["num_windows"], 3)
+
+    def test_angle_offset_widens_the_cone(self):
+        (wall,) = cone_walls(offset=3.0)
+        np.testing.assert_allclose(self.bounds(wall)[:2], (127.0, 132.0))
+
+    def test_rim_group_order_does_not_matter(self):
+        walls = {
+            "distance": {"rim_atom_groups": [list(range(8, 15)), list(range(1, 8))]},
+            "cone": {"enabled": True, "angle_offset": 0.0, "parabolic_width": 5.0, "rk2": 100.0},
+        }
+        with (
+            patch.object(apr_setup, "WALLS", walls),
+            patch.object(apr_setup.restraints, "DAT_restraint", FakeRestraint),
+        ):
+            (wall,) = apr_setup.create_cone_wall(cone_test_structure(), ":DM1", ":DM2", ":UNL@15", 3)
+        self.assertAlmostEqual(wall.custom_restraint_values["r2"], 135.0)
+
+    def test_disabled_cone_is_omitted(self):
+        self.assertEqual(cone_walls(enabled=False, structure=object()), [])
+
+    def test_g1_outside_the_cone_is_refused(self):
+        structure = cone_test_structure()
+        structure.atoms[14].xx = 6.0       # G1 at z=0: 6 A off axis, 6 A above DM1 -> 45 deg out
+        with self.assertRaisesRegex(ValueError, "outside the cone"):
+            cone_walls(offset=-1.0, structure=structure)
+
+
 if __name__ == "__main__":
     unittest.main()

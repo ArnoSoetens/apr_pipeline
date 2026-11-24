@@ -174,7 +174,8 @@ def window_setup():
     return windows, attach_fractions
 
 
-def _rim_plane_distance_from_dm1(structure, atom_numbers, dm1_position, host_prefix):
+def _rim_oxygen_coordinates(structure, atom_numbers, host_prefix):
+    """Coordinates of the configured rim oxygens (1-based host atom numbers)."""
     host_atoms = [atom for atom in structure.atoms if atom.residue.name == host_prefix]
     if any(number < 1 or number > len(host_atoms) for number in atom_numbers):
         raise ValueError(
@@ -189,7 +190,11 @@ def _rim_plane_distance_from_dm1(structure, atom_numbers, dm1_position, host_pre
             f"in host residue {host_prefix}"
         )
 
-    coordinates = np.array([[atom.xx, atom.xy, atom.xz] for atom in atoms])
+    return np.array([[atom.xx, atom.xy, atom.xz] for atom in atoms])
+
+
+def _rim_plane_distance_from_dm1(structure, atom_numbers, dm1_position, host_prefix):
+    coordinates = _rim_oxygen_coordinates(structure, atom_numbers, host_prefix)
     center = coordinates.mean(axis=0)
     _, singular_values, right_vectors = np.linalg.svd(coordinates - center)
     if len(singular_values) < 2 or singular_values[1] < 1e-6:
@@ -320,6 +325,79 @@ def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HO
     ]
 
 
+def _angle_degrees(a, b, c):
+    """Angle a-b-c at b, in degrees."""
+    u, v = np.asarray(a) - np.asarray(b), np.asarray(c) - np.asarray(b)
+    cosine = np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+
+
+def create_cone_wall(structure, D1, D2, G1, attach_windows, host_prefix=HOST):
+    """Flat-bottom D2-D1-G1 angle wall: a cone with its tip at DM1 through the nearest rim.
+
+    No force from 180 degrees down to r2 = (mean D2-D1-O angle of the oxygens of the rim plane
+    nearest DM1) - angle_offset; harmonic (rk2, kcal/mol/rad^2) from r2 down to
+    r1 = r2 - parabolic_width, linear below. Also prints how wide the cone is at the far rim.
+    """
+    cone = WALLS["cone"]
+    if not cone["enabled"]:
+        return []
+
+    dm1 = structure[D1].coordinates[0]
+    dm2 = structure[D2].coordinates[0]
+    g1 = structure[G1].coordinates[0]
+    rims = []
+    for group in WALLS["distance"]["rim_atom_groups"]:
+        oxygens = _rim_oxygen_coordinates(structure, group, host_prefix)
+        height = _rim_plane_distance_from_dm1(structure, group, dm1, host_prefix)
+        angle = float(np.mean([_angle_degrees(dm2, dm1, o) for o in oxygens]))
+        offsets = oxygens - oxygens.mean(axis=0)
+        radius = float(np.mean(np.linalg.norm(offsets[:, :2], axis=1)))  # perpendicular to z
+        rims.append((height, angle, radius))
+    (near_h, near_angle, near_r), (far_h, far_angle, far_r) = sorted(rims)
+
+    r2 = near_angle - cone["angle_offset"]
+    r1 = r2 - cone["parabolic_width"]
+    if not 0.0 < r1 < r2 < 180.0:
+        raise ValueError(
+            f"cone wall bounds out of range (r1={r1:.2f}, r2={r2:.2f} degrees; near-rim angle "
+            f"{near_angle:.2f}, angle_offset {cone['angle_offset']}, parabolic_width "
+            f"{cone['parabolic_width']}); check apr.restraints.walls.cone"
+        )
+    g1_angle = _angle_degrees(dm2, dm1, g1)
+    if g1_angle < r2:
+        raise ValueError(
+            f"G1 starts outside the cone wall (D2-D1-G1 = {g1_angle:.2f} < r2 = {r2:.2f} degrees)"
+        )
+
+    half_angle = 180.0 - r2
+    cone_r_far = far_h * np.tan(np.radians(half_angle))
+    print(
+        f"D2-D1-G1 cone wall: r1={r1:.2f}, r2={r2:.2f}, r3=r4=180 deg (half-angle {half_angle:.2f}); "
+        f"near rim {near_h:.2f} A above DM1, radius {near_r:.2f} A, angle {near_angle:.2f}; "
+        f"far rim {far_h:.2f} A, radius {far_r:.2f} A, angle {far_angle:.2f} "
+        f"(half-angle {180.0 - far_angle:.2f}); cone radius at far rim {cone_r_far:.2f} A "
+        f"= {cone_r_far / far_r:.2f}x the far ring."
+    )
+
+    wall = restraints.DAT_restraint()
+    wall.auto_apr = False
+    wall.amber_index = True
+    wall.topology = structure
+    wall.mask1 = D2
+    wall.mask2 = D1
+    wall.mask3 = G1
+    wall.attach["fc_initial"] = cone["rk2"]
+    wall.attach["fc_final"] = cone["rk2"]
+    wall.attach["target"] = 180.0
+    wall.attach["num_windows"] = attach_windows
+    wall.custom_restraint_values.update(
+        {"r1": r1, "r2": r2, "r3": 180.0, "r4": 180.0, "rk2": cone["rk2"], "rk3": cone["rk2"]}
+    )
+    wall.initialize()
+    return [wall]
+
+
 def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
 
     windows, attach_fractions= window_setup()
@@ -395,7 +473,7 @@ def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
 
     wall_restraints = create_wall_restraints(
         structure, D1, G1, G2, windows[0], host_prefix
-    )
+    ) + create_cone_wall(structure, D1, D2, G1, windows[0], host_prefix)
 
     # Create directories and write disang.rest for each window.
     window_list = create_window_list(guest_restraints)
