@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apr_pipeline"))
 import apr_analysis
 from apr_analysis import (
     _halves,
+    _read_cone_wall,
+    attach_angle_grid,
     _rim_heights_from_structure,
     attach_window_grid,
 )
@@ -145,6 +147,92 @@ class AttachGridTests(unittest.TestCase):
     def test_label_count_must_match_the_windows(self):
         with self.assertRaisesRegex(ValueError, "2 labels for 3 attach windows"):
             attach_window_grid(FakeFe(self.windows, self.targets), self.out, labels=["a000", "a001"])
+
+
+# the a000 lines of wall_test/iso_00001 (distance, angle and torsion restraints at lambda = 0)
+# plus a cone wall as apr_setup writes it
+DISANG = """\
+&rst iat= 156,148,          r1=    0.00000, r2=    6.00000, r3=    6.00000, r4=  999.00000, rk2=    0.00000, rk3=    0.00000,  &end
+&rst iat= 157,156,148,      r1=    0.00000, r2=  180.00000, r3=  180.00000, r4=  180.00000, rk2=    0.00000, rk3=    0.00000,  &end
+&rst iat= 156,148,149,      r1=    0.00000, r2=  180.00000, r3=  180.00000, r4=  180.00000, rk2=  100.00000, rk3=  100.00000,  &end
+&rst iat= 157,156,75,       r1=    0.00000, r2=  141.06222, r3=  141.06222, r4=  180.00000, rk2=  100.00000, rk3=  100.00000,  &end
+&rst iat= 156,148,          r1=    1.67671, r2=    2.67671, r3=   11.65314, r4=   12.65314, rk2=  100.00000, rk3=  100.00000,  &end
+"""
+CONE = "&rst iat= 157,156,148,      r1=  127.00000, r2=  132.00000, r3=  180.00000, r4=  180.00000, rk2=  100.00000, rk3=  100.00000,  &end\n"
+
+
+class ConeWallTests(unittest.TestCase):
+    def read(self, text):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "disang.rest"
+            path.write_text(text)
+            return _read_cone_wall(path)
+
+    def test_cone_r2_is_found_between_the_angle_restraints(self):
+        self.assertEqual(self.read(DISANG + CONE), 132.0)
+
+    def test_no_cone_gives_none(self):
+        self.assertIsNone(self.read(DISANG))      # guest angles (r2 == r3) and the distance wall
+
+
+class FakeAngleFe:
+    """Attach data as pAPRika has it: a distance restraint first, then an angle in radians."""
+
+    def __init__(self, angles_deg, target_deg=180.0):
+        from openff.units import unit
+        self.unit = unit
+        self.simulation_data = {"attach": [
+            [np.full(len(a), 6.0) * unit.angstrom, np.radians(a) * unit.radian] for a in angles_deg]}
+        self._targets = [np.full(len(angles_deg), 6.0) * unit.angstrom,
+                         np.radians(np.full(len(angles_deg), target_deg)) * unit.radian]
+
+    def prepare_data(self, phase):
+        restraints = [SimpleNamespace(mask3=None, mask4=None),
+                      SimpleNamespace(mask3=":UNL@C1", mask4=None)]
+        return None, None, None, restraints, None, self._targets, None
+
+
+class AttachAngleGridTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name) / "angles.jpg"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_angles_in_degrees_with_target_and_cone_line(self):
+        angles = [np.linspace(150.0, 170.0, 100), np.linspace(160.0, 179.0, 100)]
+        fig = attach_angle_grid(FakeAngleFe(angles), self.out, labels=["a000", "p000"], cone=132.0)
+        self.assertTrue(self.out.is_file())
+        for ax, window in zip(fig.axes[:2], angles):
+            lines = vertical_lines(ax)
+            self.assertIn((180.0, "--", "red"), [(round(x, 6), s, c) for x, s, c in lines])
+            self.assertEqual([x for x, style, _ in lines if style == ":"], [132.0])
+            edges = [p.get_xy()[:, 0] for p in ax.patches if not p.get_fill()]
+            self.assertAlmostEqual(min(e.min() for e in edges), window.min(), places=6)
+            self.assertAlmostEqual(max(e.max() for e in edges), window.max(), places=6)
+        self.assertEqual(fig.axes[1].get_title(), "p000 (λ=1)")
+        self.assertEqual(fig.axes[1].get_xlabel(), "DM2-DM1-G1 angle (degrees)")
+
+    def test_without_cone_no_dotted_line(self):
+        fig = attach_angle_grid(FakeAngleFe([np.linspace(150.0, 170.0, 100)]), self.out)
+        self.assertFalse([x for x, style, _ in vertical_lines(fig.axes[0]) if style == ":"])
+
+    def test_refuses_when_there_is_no_angle_restraint(self):
+        fe = FakeAngleFe([np.linspace(150.0, 170.0, 100)])
+        fe.prepare_data = lambda phase: (None, None, None, [SimpleNamespace(mask3=None, mask4=None)],
+                                         None, None, None)
+        with self.assertRaisesRegex(ValueError, "no angle restraint"):
+            attach_angle_grid(fe, self.out)
+
+
+class AxisLabelTests(unittest.TestCase):
+    def test_x_label_and_ticks_only_on_panels_without_a_panel_below(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            windows = [np.random.default_rng(i).normal(6.0, 1.0, 50) for i in range(7)]
+            fig = attach_window_grid(FakeFe(windows, [6.0] * 7), Path(tmp) / "g.jpg")
+        labelled = [k for k, ax in enumerate(fig.axes[:7]) if ax.get_xlabel()]
+        self.assertEqual(labelled, [2, 3, 4, 5, 6])                # 7 windows in rows of 5
 
 
 if __name__ == "__main__":

@@ -21,7 +21,6 @@ project/
 │   ├── collect_results.py builds results.csv from all results.json
 │   ├── cleanup.py         removes transient files of analyzed points (--dry-run first)
 │   ├── cleanup_batch_logs.py   removes a finished batch's slurm logs (started by submit_arrays)
-│   ├── angle_histogram.py restraint-angle histograms per window
 │   ├── config_env.py      bash cannot read TOML: prints `export` lines for array_task.sh / open_windows.sh
 │   └── templates/         the Amber .in templates with ${placeholders} (APR windows and guest-only)
 └── data/                  the project: everything a campaign needs and produces
@@ -446,7 +445,9 @@ python scripts/analysis.py --no-enhanced ...    # without them
 
 The default for both is `analysis.enhanced` in `data/inputs/config.toml` (`true`: with the extras).
 
-Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhanced adds `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg`,
+Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhanced adds `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg` (DM1-G1 distance per
+attach window, 1st/2nd half of the frames, rims dotted), `plots/attach_angle_grid.jpg` (DM2-DM1-G1
+angle, cone wall dotted),
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
 (`method`, `attach_fractions`, `pull_distances`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions
@@ -515,24 +516,6 @@ not summed across separate simulations. Mean potential energy is a restraint
 energy statistic, not work or a binding free-energy contribution. No
 `distance_wall` section is added when no such restraint is present.
 
-
-## Restraint-angle histograms
-
-`paprika.analysis.fe_calc.collect_data()` reads trajectories to report the
-coordinates of restraints in `windows/restraints.json`. This helper plots the
-first angle restraint's sampled coordinate by attachment window, using the
-atom indices and target stored in that JSON rather than assuming a particular
-guest atom name. It uses MDTraj to read the trajectories.
-
-```sh
-python scripts/angle_histogram.py
-```
-
-By default this reads `data/PFBA/windows/{a000,a001,a002,a003,a004,a015}/production.nc`
-and plots the first angle restraint, `DM2:DUM - DM1:DUM - UNL:C1`, with its
-configured target shown as a dashed line. It writes the per-window histogram
-and frame-by-frame CSV to `data/PFBA/analysis/`. Use `--windows`, `--data-dir`,
-`--output-dir`, or `--bins` to override those defaults.
 
 ## Dihedral distributions
 

@@ -76,25 +76,13 @@ def _grid_title(label):
     return f"{label} (λ=1)" if label == "p000" else label
 
 
-def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0,
-                       phase="attach", ncols=5):
-    """One histogram per attach window, 1st half of the frames blue and 2nd half orange,
-    with the target as a red dashed line and the rims (Å from DM1) as dotted lines.
-
-    labels: window folder per panel (the λ=1 window is p000 with continuous_apr);
-    a000, a001, ... when not given. restraint_index 0 is the distance restraint (Å).
-    Returns the (closed) figure.
-    """
-    data = fe.simulation_data[phase]                 # list per window, per restraint
-    num_win = len(data)
-    if labels is None:
-        labels = [f"a{k:03d}" for k in range(num_win)]
+def _window_grid(values, targets, labels, out_path, marks=(), mark_label="", title="",
+                 xlabel="", ncols=5):
+    """One histogram per window, 1st half of the frames blue and 2nd half orange, the target
+    as a red dashed line and each x in marks as a dotted line. Returns the (closed) figure."""
+    num_win = len(values)
     if len(labels) != num_win:
-        raise ValueError(f"{len(labels)} labels for {num_win} {phase} windows")
-
-    # ordered targets for this restraint, in the same window order as simulation_data
-    _, _, _, _, _, ordered_targets, _ = fe.prepare_data(phase)
-    targets = ordered_targets[restraint_index].magnitude
+        raise ValueError(f"{len(labels)} labels for {num_win} attach windows")
 
     nrows = int(np.ceil(num_win / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(3 * ncols, 2.5 * nrows),
@@ -103,23 +91,26 @@ def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0,
 
     for k in range(num_win):
         ax = axes[k]
-        values = np.asarray(_mag(data[k][restraint_index]), dtype=float).reshape(-1)
-        edges = np.histogram_bin_edges(values, bins=40)
-        for part, color, name in zip(_halves(values), HALF_COLORS, HALF_LABELS):
+        window_values = np.asarray(values[k], dtype=float).reshape(-1)
+        edges = np.histogram_bin_edges(window_values, bins=40)
+        for part, color, name in zip(_halves(window_values), HALF_COLORS, HALF_LABELS):
             ax.hist(part, bins=edges, histtype="stepfilled", color=color, alpha=0.2)
             ax.hist(part, bins=edges, histtype="step", color=color, linewidth=1.2, label=name)
         ax.axvline(targets[k], color="red", linestyle="--", linewidth=1, label="target")
-        for i, rim in enumerate(rims or ()):
-            ax.axvline(rim, color="0.3", linestyle=":", linewidth=1.2,
-                       label="rim" if i == 0 else None)
+        for i, mark in enumerate(marks):
+            ax.axvline(mark, color="0.3", linestyle=":", linewidth=1.2,
+                       label=mark_label if i == 0 else None)
         ax.set_title(_grid_title(labels[k]), fontsize=9)
         ax.tick_params(labelsize=7)
+        if k + ncols >= num_win:                     # no panel below: ticks and axis label
+            ax.tick_params(labelbottom=True)
+            ax.set_xlabel(xlabel, fontsize=8)
 
     for k in range(num_win, len(axes)):              # switch off unused slots
         axes[k].axis("off")
 
     handles, names = axes[0].get_legend_handles_labels()
-    fig.suptitle("Attach phase: restraint value distribution per window", y=1.0)
+    fig.suptitle(title, y=1.0)
     if num_win < len(axes):                          # legend in the first unused slot
         axes[num_win].legend(handles, names, loc="center", fontsize=9, frameon=False)
         fig.tight_layout()
@@ -130,6 +121,80 @@ def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0,
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
     return fig
+
+
+def _attach_labels(labels, num_win):
+    return labels if labels is not None else [f"a{k:03d}" for k in range(num_win)]
+
+
+def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0, phase="attach",
+                       ncols=5):
+    """Distance restraint (DM1-G1, Å) per attach window: halves, target, rims as dotted lines.
+
+    labels: window folder per panel (the λ=1 window is p000 with continuous_apr);
+    a000, a001, ... when not given. Returns the (closed) figure.
+    """
+    data = fe.simulation_data[phase]                 # list per window, per restraint
+    # ordered targets for this restraint, in the same window order as simulation_data
+    targets = fe.prepare_data(phase)[5][restraint_index].magnitude
+    values = [_mag(window[restraint_index]) for window in data]
+    return _window_grid(values, targets, _attach_labels(labels, len(data)), out_path,
+                        marks=tuple(rims or ()), mark_label="rim",
+                        title="Attach phase: DM1-G1 distance per window",
+                        xlabel="DM1-G1 distance (Å)", ncols=ncols)
+
+
+def _degrees(angles):
+    """Angles in degrees: pint quantities are converted, plain numbers are taken as radians
+    (pAPRika's fe_calc reads angles in radians)."""
+    if hasattr(angles, "to"):
+        return np.asarray(angles.to("degree").magnitude, dtype=float)
+    return np.degrees(np.asarray(angles, dtype=float))
+
+
+def _first_angle_index(active_restraints):
+    """Position of the first angle restraint (three masks) among the active restraints."""
+    for index, restraint in enumerate(active_restraints):
+        if restraint.mask3 is not None and restraint.mask4 is None:
+            return index
+    raise ValueError("no angle restraint among the attach restraints")
+
+
+def attach_angle_grid(fe, out_path, labels=None, cone=None, phase="attach", ncols=5):
+    """First guest angle restraint (DM2-DM1-G1, degrees) per attach window: halves, target,
+    and the cone wall (r2, where its force starts) as a dotted line. Returns the figure."""
+    data = fe.simulation_data[phase]
+    prepared = fe.prepare_data(phase)
+    index = _first_angle_index(prepared[3])
+    targets = _degrees(prepared[5][index])
+    values = [_degrees(window[index]) for window in data]
+    return _window_grid(values, targets, _attach_labels(labels, len(data)), out_path,
+                        marks=() if cone is None else (cone,), mark_label="cone wall",
+                        title="Attach phase: DM2-DM1-G1 angle per window",
+                        xlabel="DM2-DM1-G1 angle (degrees)", ncols=ncols)
+
+
+def _read_cone_wall(disang_path):
+    """r2 (degrees) of the cone wall in an Amber restraint file, or None when there is none.
+
+    The cone is the three-atom flat-bottom block with r1 < r2 < r3 and rk2 > 0; the guest
+    angle restraints always have r2 == r3.
+    """
+    text = Path(disang_path).read_text()
+    for block in re.findall(r"&rst\b(.*?)&end", text, flags=re.IGNORECASE | re.DOTALL):
+        atoms = re.search(r"\biat\s*=\s*(.*?)(?=,\s*r1\s*=)", block, flags=re.IGNORECASE | re.DOTALL)
+        if atoms is None or len(re.findall(r"-?\d+", atoms.group(1))) != 3:
+            continue
+        values = {}
+        for key in ("r1", "r2", "r3", "rk2"):
+            match = re.search(rf"\b{key}\s*=\s*([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][-+]?\d+)?)",
+                              block, flags=re.IGNORECASE)
+            if match is None:
+                break
+            values[key] = float(match.group(1))
+        if len(values) == 4 and values["r1"] < values["r2"] < values["r3"] and values["rk2"] > 0:
+            return values["r2"]
+    return None
 
 
 def _mag(x):
@@ -391,7 +456,7 @@ def convergence_plot(res, out_path):
 
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
                           complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=False,
-                          convergence_path=None):
+                          convergence_path=None, angle_grid_path=None):
     """Returns (results dict, simulation_data). dG values in kcal/mol.
 
     The free energy at several fractions of the trajectory (CONVERGENCE_FRACTIONS) is only
@@ -477,6 +542,14 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
             print(f"warning: no rim lines in the attach-window grid: {e}", flush=True)
         attach_window_grid(fe, grid_path, labels=attach_window_names, rims=rims)
 
+    if angle_grid_path:
+        try:
+            cone = _read_cone_wall(Path(windows_dir) / "a000" / "disang.rest")
+        except OSError as e:                         # a plot detail must not block results.json
+            cone = None
+            print(f"warning: no cone line in the attach angle grid: {e}", flush=True)
+        attach_angle_grid(fe, angle_grid_path, labels=attach_window_names, cone=cone)
+
     out = {"dG_bind": dg, "dG_sem": dg_sem, "units": "kcal/mol",
            "ref_state_work": float(ref_work),
            "phases": {phase: _phase_details(res, phase) for phase in ("attach", "pull")},
@@ -503,7 +576,7 @@ def run(dp, complex_prefix=COMPLEX, enhanced=False):
     """Analyze one fully simulated data point: <dp>/results.json and plots in <dp>/plots/.
 
     Always binding_free_energy.jpg; enhanced=True also the convergence plot, the attach-window
-    grid, the pull-window histograms and extra metadata in results.json.
+    distance and angle grids, the pull-window histograms and extra metadata in results.json.
     """
     dp = Path(dp)
     windows = dp / "windows"
@@ -522,6 +595,7 @@ def run(dp, complex_prefix=COMPLEX, enhanced=False):
         grid_path=(plots / "attach_windows_grid.jpg") if enhanced else None,
         title_name=dp.name, complex_prefix=complex_prefix, enhanced=enhanced,
         convergence_path=(plots / "convergence_plot.jpg") if enhanced else None,
+        angle_grid_path=(plots / "attach_angle_grid.jpg") if enhanced else None,
     )
     if enhanced:
         pull_window_histograms(sim_data, plots / "pull_window_histograms.jpg")
