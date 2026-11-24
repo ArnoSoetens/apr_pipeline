@@ -13,11 +13,16 @@ from paprika import analysis
 from paprika.io import load_restraints, load_trajectory, read_restraint_data
 from paprika.restraints import create_window_list
 
+import parmed as pmd
+
 from apr_config import CFG, get_attach_fractions, get_pull_distances, get_method
+from apr_setup import _rim_plane_distance_from_dm1
 from datapoints import PLOTS
 
 # --- values from config.toml ---
 COMPLEX = CFG["naming"]["complex_prefix"]
+HOST = CFG["naming"]["host_prefix"]
+RIM_ATOM_GROUPS = CFG["apr"]["restraints"]["walls"]["distance"]["rim_atom_groups"]
 INITIAL_DISTANCE = CFG["apr"]["initial_distance"]
 METHOD = get_method()                     # "ti-block" or "mbar-autoc"
 METHODS = ("ti-block", "mbar-autoc")
@@ -35,14 +40,57 @@ def pull_window_histograms(simulation_data, out_path, restraint_index=0):
     plt.close()
 
 
-def attach_window_grid(fe, out_path, restraint_index=0, phase="attach", ncols=5):
-    """One histogram per attach window: sampled restraint values, with the target as a red line.
+HALF_COLORS = ("tab:blue", "tab:orange")
+HALF_LABELS = ("1st half", "2nd half")
 
-    restraint_index 0 is the distance restraint (Å). For the angle/torsion restraints
-    (1, 2) the values may need converting from radians to degrees.
+
+def _halves(values):
+    """First and second half of a window's frames (an odd extra frame goes to the second half)."""
+    values = np.asarray(values)
+    middle = len(values) // 2
+    return values[:middle], values[middle:]
+
+
+def _rim_heights_from_structure(structure, rim_atom_groups=RIM_ATOM_GROUPS, host_prefix=HOST):
+    """(near, far) rim-plane heights in Å along +z from DM1, as apr_setup measures them."""
+    dm1 = structure[":DM1"].coordinates[0]
+    return tuple(sorted(
+        _rim_plane_distance_from_dm1(structure, group, dm1, host_prefix)
+        for group in rim_atom_groups
+    ))
+
+
+def rim_heights(windows_dir, complex_prefix=COMPLEX, rim_atom_groups=RIM_ATOM_GROUPS,
+                host_prefix=HOST):
+    """(near, far) rim heights from DM1, from the starting structure of windows/a000.
+
+    The rim atoms are apr.restraints.walls.distance.rim_atom_groups in config.toml.
+    """
+    window = Path(windows_dir) / "a000"
+    structure = pmd.load_file(str(window / f"{complex_prefix}-dum.prmtop"),
+                              str(window / f"{complex_prefix}-dum.rst7"))
+    return _rim_heights_from_structure(structure, rim_atom_groups, host_prefix)
+
+
+def _grid_title(label):
+    return f"{label} (λ=1)" if label == "p000" else label
+
+
+def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0,
+                       phase="attach", ncols=5):
+    """One histogram per attach window, 1st half of the frames blue and 2nd half orange,
+    with the target as a red dashed line and the rims (Å from DM1) as dotted lines.
+
+    labels: window folder per panel (the λ=1 window is p000 with continuous_apr);
+    a000, a001, ... when not given. restraint_index 0 is the distance restraint (Å).
+    Returns the (closed) figure.
     """
     data = fe.simulation_data[phase]                 # list per window, per restraint
     num_win = len(data)
+    if labels is None:
+        labels = [f"a{k:03d}" for k in range(num_win)]
+    if len(labels) != num_win:
+        raise ValueError(f"{len(labels)} labels for {num_win} {phase} windows")
 
     # ordered targets for this restraint, in the same window order as simulation_data
     _, _, _, _, _, ordered_targets, _ = fe.prepare_data(phase)
@@ -55,19 +103,33 @@ def attach_window_grid(fe, out_path, restraint_index=0, phase="attach", ncols=5)
 
     for k in range(num_win):
         ax = axes[k]
-        values = data[k][restraint_index].magnitude
-        ax.hist(values, bins=40, color="steelblue", alpha=0.8)
-        ax.axvline(targets[k], color="red", linestyle="--", linewidth=1)
-        ax.set_title(f"a{k:03d}", fontsize=9)
+        values = np.asarray(_mag(data[k][restraint_index]), dtype=float).reshape(-1)
+        edges = np.histogram_bin_edges(values, bins=40)
+        for part, color, name in zip(_halves(values), HALF_COLORS, HALF_LABELS):
+            ax.hist(part, bins=edges, histtype="stepfilled", color=color, alpha=0.2)
+            ax.hist(part, bins=edges, histtype="step", color=color, linewidth=1.2, label=name)
+        ax.axvline(targets[k], color="red", linestyle="--", linewidth=1, label="target")
+        for i, rim in enumerate(rims or ()):
+            ax.axvline(rim, color="0.3", linestyle=":", linewidth=1.2,
+                       label="rim" if i == 0 else None)
+        ax.set_title(_grid_title(labels[k]), fontsize=9)
         ax.tick_params(labelsize=7)
 
     for k in range(num_win, len(axes)):              # switch off unused slots
         axes[k].axis("off")
 
+    handles, names = axes[0].get_legend_handles_labels()
     fig.suptitle("Attach phase: restraint value distribution per window", y=1.0)
-    fig.tight_layout()
+    if num_win < len(axes):                          # legend in the first unused slot
+        axes[num_win].legend(handles, names, loc="center", fontsize=9, frameon=False)
+        fig.tight_layout()
+    else:                                            # no free slot: one row above the panels
+        fig.legend(handles, names, loc="upper center", ncol=len(names), fontsize=8,
+                   frameon=False, bbox_to_anchor=(0.5, 0.985))
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
+    return fig
 
 
 def _mag(x):
@@ -408,7 +470,12 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
         plt.close()
 
     if grid_path:
-        attach_window_grid(fe, grid_path)
+        try:
+            rims = rim_heights(windows_dir, complex_prefix)
+        except Exception as e:                       # a plot detail must not block results.json
+            rims = None
+            print(f"warning: no rim lines in the attach-window grid: {e}", flush=True)
+        attach_window_grid(fe, grid_path, labels=attach_window_names, rims=rims)
 
     out = {"dG_bind": dg, "dG_sem": dg_sem, "units": "kcal/mol",
            "ref_state_work": float(ref_work),
