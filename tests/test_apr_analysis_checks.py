@@ -13,6 +13,7 @@ from parmed.topologyobjects import Atom
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apr_pipeline"))
 import apr_analysis
 from apr_analysis import (
+    monotonicity_check,
     _convergence_curves,
     _min_neighbour_overlap,
     _reduced_potentials,
@@ -416,6 +417,51 @@ class OverlapTests(unittest.TestCase):
         weakest = self.overlap([6.0, 6.2, 7.0])
         self.assertLess(weakest, 0.5 * close)
         self.assertAlmostEqual(weakest, self.overlap([6.2, 7.0]), delta=0.02)
+
+
+class MonotonicityTests(unittest.TestCase):
+    lam = np.array([0.0, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1.0])
+
+    def series(self, bump_at=None, bump=0.0, n=4000, seed=0):
+        """Independent R values per window with mean 2/(1 + 20 lambda) and sd 0.5, listed in
+        shuffled order (the check sorts by lambda). The blocking SEM is about 0.5/sqrt(n)."""
+        rng = np.random.default_rng(seed)
+        means = 2.0 / (1.0 + 20.0 * self.lam)
+        if bump_at is not None:
+            means[bump_at] += bump
+        order = rng.permutation(len(self.lam))
+        return self.lam[order], [rng.normal(means[i], 0.5, n) for i in order]
+
+    def test_z_crit_is_bonferroni_corrected_over_the_pairs(self):
+        result = monotonicity_check(*self.series())
+        self.assertAlmostEqual(result["z_crit"], 2.61, places=2)       # 12 windows, 11 pairs
+
+    def test_decreasing_curve_passes(self):
+        result = monotonicity_check(*self.series())
+        self.assertTrue(result["monotonic"])
+        self.assertEqual(result["violations"], [])
+
+    def test_clear_rise_fails_at_that_pair(self):
+        # window 9 (lambda 0.5) above window 8 (lambda 0.35) by about 10 combined SEMs
+        means = 2.0 / (1.0 + 20.0 * self.lam)
+        bump = means[8] - means[9] + 10 * np.sqrt(2) * 0.5 / np.sqrt(4000)
+        result = monotonicity_check(*self.series(bump_at=9, bump=bump))
+        self.assertFalse(result["monotonic"])
+        self.assertEqual([(v["lambda_i"], v["lambda_j"]) for v in result["violations"]], [(0.35, 0.5)])
+        violation = result["violations"][0]
+        self.assertGreater(violation["rise"], 0)
+        self.assertAlmostEqual(violation["z"], 10, delta=3)
+        self.assertEqual(result["max_z"], violation["z"])
+
+    def test_rise_within_the_noise_passes(self):
+        means = 2.0 / (1.0 + 20.0 * self.lam)
+        bump = means[10] - means[11] + 1 * np.sqrt(2) * 0.5 / np.sqrt(4000)    # about 1 SEM
+        self.assertTrue(monotonicity_check(*self.series(bump_at=11, bump=bump))["monotonic"])
+
+    def test_constant_windows_do_not_crash(self):
+        result = monotonicity_check([0.0, 0.5, 1.0], [np.full(64, 1.0)] * 3)
+        self.assertTrue(result["monotonic"])
+        self.assertEqual(result["max_z"], 0.0)
 
 
 if __name__ == "__main__":

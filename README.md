@@ -449,7 +449,7 @@ Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhance
 attach window, 1st/2nd half of the frames, rims dotted), `plots/attach_angle_grid.jpg` (DM2-DM1-G1
 angle, cone wall dotted),
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
-(`method`, `attach_fractions`, `pull_distances`, `overlap`). Without enhanced the free
+(`method`, `attach_fractions`, `pull_distances`, `overlap`, `monotonicity_attach`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions
 the convergence plot needs, so the analysis is faster. The calculation is the
 same: MBAR, the reference-state work and the wall/threshold diagnostics come out
@@ -525,6 +525,13 @@ With `--enhanced`, `overlap` holds one number per phase (`attach`, `pull`): the 
 MBAR overlap-matrix element between neighbouring windows (pymbar `compute_overlap`, all frames,
 the same reduced potentials as pAPRika's MBAR). Identical neighbours give 0.5; below about 0.03 a
 pair overlaps poorly and the windows there are too far apart.
+
+`monotonicity_attach` checks that the mean restraint energy <R> (full force constants, the TI
+integrand) does not rise with lambda: d<R>/dlambda = -beta Var(R) <= 0, i.e. the attach work curve
+is concave. For each neighbouring pair z = (rise) / sqrt(SEM_i^2 + SEM_j^2) with pAPRika's blocking
+SEM; a pair is a violation when z > z_crit = Phi^-1(1 - 0.05/(K-1)) (one-sided, Bonferroni over the
+K-1 pairs; 2.61 for 12 windows). `monotonic` is false when there is any violation; `violations`
+lists their lambda pair, rise (kcal/mol) and z.
 
 
 ## Dihedral distributions

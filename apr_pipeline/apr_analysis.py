@@ -591,6 +591,32 @@ def phase_overlaps(fe, phases=("attach", "pull")):
             for phase in phases}
 
 
+def monotonicity_check(dl_vals, dU, alpha=0.05):
+    """<R>_lambda must not increase with lambda (d<R>/dlambda = -beta Var(R) <= 0, so the attach
+    work W(lambda) is concave). R is the attach dU per frame (full force constants).
+
+    Windows are sorted by lambda; a rise between neighbours is a violation when
+    z = (m_j - m_i) / sqrt(s_i^2 + s_j^2) > z_crit, with s the blocking SEM and z_crit one-sided,
+    Bonferroni-corrected over the K-1 pairs: Phi^-1(1 - alpha / (K-1)).
+    """
+    from statistics import NormalDist
+
+    order = np.argsort(dl_vals, kind="stable")
+    lam = np.asarray(dl_vals, dtype=float)[order]
+    means = np.array([np.mean(dU[i]) for i in order])
+    sems = np.array([_block_sem(np.asarray(dU[i])) for i in order])
+    pairs = len(lam) - 1
+    z_crit = NormalDist().inv_cdf(1.0 - alpha / max(pairs, 1))
+    rise = means[1:] - means[:-1]
+    combined = np.sqrt(sems[1:] ** 2 + sems[:-1] ** 2)
+    z = rise / np.maximum(combined, np.finfo(float).tiny)
+    violations = [{"lambda_i": float(lam[k]), "lambda_j": float(lam[k + 1]),
+                   "rise": float(rise[k]), "z": float(z[k])}
+                  for k in range(pairs) if z[k] > z_crit]
+    return {"monotonic": not violations, "z_crit": float(z_crit),
+            "max_z": float(np.max(z)) if pairs else None, "violations": violations}
+
+
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
                           complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=False,
                           convergence_path=None, angle_grid_path=None):
@@ -707,6 +733,8 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
         out["attach_fractions"] = attach_fractions
         out["pull_distances"] = [float(x) for x in pull_distances]
         out["overlap"] = phase_overlaps(fe)
+        out["monotonicity_attach"] = monotonicity_check(
+            *_ti_per_frame(fe.prepare_data("attach"), "attach"))
     return out, sim_data
 
 
