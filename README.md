@@ -449,7 +449,7 @@ Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhance
 attach window, 1st/2nd half of the frames, rims dotted), `plots/attach_angle_grid.jpg` (DM2-DM1-G1
 angle, cone wall dotted),
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
-(`method`, `attach_fractions`, `pull_distances`). Without enhanced the free
+(`method`, `attach_fractions`, `pull_distances`, `overlap`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions
 the convergence plot needs, so the analysis is faster. The calculation is the
 same: MBAR, the reference-state work and the wall/threshold diagnostics come out
@@ -520,6 +520,11 @@ this net work is `U(first frame) - U(last frame)`. Per-window work values are
 not summed across separate simulations. Mean potential energy is a restraint
 energy statistic, not work or a binding free-energy contribution. No
 `distance_wall` section is added when no such restraint is present.
+
+With `--enhanced`, `overlap` holds one number per phase (`attach`, `pull`): the smallest
+MBAR overlap-matrix element between neighbouring windows (pymbar `compute_overlap`, all frames,
+the same reduced potentials as pAPRika's MBAR). Identical neighbours give 0.5; below about 0.03 a
+pair overlaps poorly and the windows there are too far apart.
 
 
 ## Dihedral distributions

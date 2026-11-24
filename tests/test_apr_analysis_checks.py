@@ -14,6 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apr_pipeline"))
 import apr_analysis
 from apr_analysis import (
     _convergence_curves,
+    _min_neighbour_overlap,
+    _reduced_potentials,
     _halves,
     _ti_integral,
     _ti_per_frame,
@@ -360,6 +362,60 @@ class ConvergencePlotTests(unittest.TestCase):
         self.assertEqual(set(curves), {"attach", "pull"})
         self.assertEqual([t.get_text() for t in fig.axes[0].get_legend().get_texts()],
                          ["forward (first f)", "reverse (last f)"])
+
+
+class OverlapTests(unittest.TestCase):
+    beta = 1.0 / (0.0019872043 * 298.15)
+
+    def overlap(self, centres, k=10.0, n=2000, seed=0):
+        """Windows that sample exactly their own harmonic potential around their centre."""
+        rng = np.random.default_rng(seed)
+        sd = np.sqrt(1.0 / (2.0 * self.beta * k))
+        values = [rng.normal(c, sd, n) for c in centres]
+        data = prepared(values, [k] * len(centres), centres)
+        return _min_neighbour_overlap(*_reduced_potentials(data, self.beta))
+
+    def test_reduced_potentials_are_beta_k_squared_deviation_per_window_pair(self):
+        data = prepared([[6.0, 7.0], [8.0]], [0.0, 10.0], [6.0, 7.0])
+        u, N = _reduced_potentials(data, beta=2.0)
+        np.testing.assert_array_equal(N, [2, 1])
+        np.testing.assert_allclose(u[0, 0, :2], [0.0, 0.0])                 # k = 0 in window 0
+        np.testing.assert_allclose(u[0, 1, :2], [2.0 * 10.0 * 1.0, 0.0])
+        np.testing.assert_allclose(u[1, 1, :1], [2.0 * 10.0 * 1.0])
+
+    def test_dihedral_deviation_is_wrapped(self):
+        data = prepared([np.radians([-175.0])], [100.0], np.radians([170.0]),
+                        units=("radian", "kcal/mol/radian**2"), masks=(":A", ":B"))
+        u, _ = _reduced_potentials(data, beta=1.0)
+        self.assertAlmostEqual(u[0, 0, 0], 100.0 * np.radians(15.0) ** 2)
+
+    def test_reproduces_paprika_mbar_free_energy(self):
+        import pymbar
+        from paprika import analysis
+        rng = np.random.default_rng(5)
+        values = [rng.normal(6.0 + 0.5 * k, 0.3, 300) for k in range(4)]
+        data = prepared(values, [10.0] * 4, [6.0, 6.5, 7.0, 7.5])
+        fe = analysis.fe_calc()
+        fe.results = {"pull": {"mbar-autoc": {}}}
+        fe.fractions = [1.0]
+        fe.run_mbar("pull", prepared(values, [10.0] * 4, [6.0, 6.5, 7.0, 7.5]), "mbar-autoc")
+        beta = float(fe.beta.to("mol/kcal").magnitude)
+        theirs = fe.results["pull"]["mbar-autoc"]["fraction_fe_matrix"][1.0][0, -1]
+        u, N = _reduced_potentials(data, beta)
+        ours = pymbar.MBAR(u, N).compute_free_energy_differences()["Delta_f"][0, -1] / beta
+        self.assertAlmostEqual(float(ours), float(getattr(theirs, "magnitude", theirs)), places=8)
+
+    def test_identical_windows_overlap_one_half(self):
+        self.assertAlmostEqual(self.overlap([6.0, 6.0]), 0.5, places=6)
+
+    def test_far_apart_windows_hardly_overlap(self):
+        self.assertLess(self.overlap([6.0, 9.0]), 1e-3)
+
+    def test_the_weakest_neighbour_pair_is_reported(self):
+        close = self.overlap([6.0, 6.2])
+        weakest = self.overlap([6.0, 6.2, 7.0])
+        self.assertLess(weakest, 0.5 * close)
+        self.assertAlmostEqual(weakest, self.overlap([6.2, 7.0]), delta=0.02)
 
 
 if __name__ == "__main__":

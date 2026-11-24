@@ -550,6 +550,47 @@ def convergence_plot(fe, out_path, phases=("attach", "pull"), fractions=CONVERGE
     return fig, all_curves
 
 
+def _reduced_potentials(prepared, beta):
+    """u_kln[k, l, n] = beta * sum_r k_r,l (x_r,k,n - x0_r,l)^2: frame n of window k in the
+    potential of window l, as pAPRika's run_mbar builds it (dihedrals wrapped around the target
+    of window l; on copies). beta in mol/kcal. Returns (u_kln, N_k)."""
+    num_win, data_points, max_points, active, force_constants, targets, values = prepared
+    fcs = [np.asarray(f.magnitude, dtype=float) for f in force_constants]
+    tgs = [np.asarray(t.magnitude, dtype=float) for t in targets]
+    period = float((360.0 * openff_unit.degree).to(openff_unit.radian).magnitude)
+    N_k = np.asarray(data_points, dtype=int)
+    u_kln = np.zeros((num_win, num_win, max_points))
+    for k in range(num_win):
+        for r, restraint in enumerate(active):
+            x = values[k][r]
+            if hasattr(x, "to"):
+                x = x.to(targets[r].units)
+            x = np.asarray(getattr(x, "magnitude", x), dtype=float)
+            deviation = x[None, :] - tgs[r][:, None]                 # (window l, frame n)
+            if restraint.mask3 is not None and restraint.mask4 is not None:
+                deviation = (deviation + period / 2) % period - period / 2
+            u_kln[k, :, :N_k[k]] += beta * fcs[r][:, None] * deviation ** 2
+    return u_kln, N_k
+
+
+def _min_neighbour_overlap(u_kln, N_k):
+    """Smallest MBAR overlap-matrix element between neighbouring windows (O[k, k+1] and
+    O[k+1, k]); all frames are used. Rule of thumb: below about 0.03 the pair overlaps poorly."""
+    import pymbar
+
+    overlap = pymbar.MBAR(u_kln, N_k).compute_overlap()["matrix"]
+    pairs = [overlap[k, k + 1] for k in range(len(N_k) - 1)]
+    pairs += [overlap[k + 1, k] for k in range(len(N_k) - 1)]
+    return float(min(pairs))
+
+
+def phase_overlaps(fe, phases=("attach", "pull")):
+    """{phase: smallest neighbour overlap} for results.json."""
+    beta = float(fe.beta.to("mol/kcal").magnitude)
+    return {phase: _min_neighbour_overlap(*_reduced_potentials(fe.prepare_data(phase), beta))
+            for phase in phases}
+
+
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
                           complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=False,
                           convergence_path=None, angle_grid_path=None):
@@ -665,6 +706,7 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
         out["method"] = METHOD
         out["attach_fractions"] = attach_fractions
         out["pull_distances"] = [float(x) for x in pull_distances]
+        out["overlap"] = phase_overlaps(fe)
     return out, sim_data
 
 
