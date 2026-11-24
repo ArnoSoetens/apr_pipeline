@@ -13,7 +13,12 @@ from parmed.topologyobjects import Atom
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apr_pipeline"))
 import apr_analysis
 from apr_analysis import (
+    MAX_TRANSITIONS_COLOUR,
+    _guest_torsions,
+    _js_halves,
+    count_transitions,
     monotonicity_check,
+    plot_dihedral_overview,
     _convergence_curves,
     _min_neighbour_overlap,
     _reduced_potentials,
@@ -462,6 +467,99 @@ class MonotonicityTests(unittest.TestCase):
         result = monotonicity_check([0.0, 0.5, 1.0], [np.full(64, 1.0)] * 3)
         self.assertTrue(result["monotonic"])
         self.assertEqual(result["max_z"], 0.0)
+
+
+def chain_topology():
+    """MDTraj topology: a host atom, then guest UNL = perfluorobutane-like chain
+    F1-C1-C2-C3-C4-F2 with one more F on each carbon, plus a second residue after it."""
+    import mdtraj as md
+    top = md.Topology()
+    chain = top.add_chain()
+    host = top.add_residue("BCD", chain)
+    top.add_atom("O1", md.element.oxygen, host)
+    guest = top.add_residue("UNL", chain)
+    carbons = [top.add_atom(f"C{i}", md.element.carbon, guest) for i in range(1, 5)]
+    for a, b in zip(carbons, carbons[1:]):
+        top.add_bond(a, b)
+    n = 1
+    for carbon, count in zip(carbons, (3, 2, 2, 3)):
+        for _ in range(count):
+            fluorine = top.add_atom(f"F{n}", md.element.fluorine, guest)
+            top.add_bond(carbon, fluorine)
+            n += 1
+    other = top.add_residue("DM1", chain)
+    top.add_atom("DUM", md.element.carbon, other)
+    return top
+
+
+class GuestTorsionTests(unittest.TestCase):
+    def test_chain_torsions_from_the_topology_bonds(self):
+        torsions = _guest_torsions(chain_topology(), resname="UNL")
+        central = [tuple(sorted(quad[1:3])) for quad, _ in torsions]
+        self.assertEqual(central, [(1, 2), (2, 3), (3, 4)])          # C1-C2, C2-C3, C3-C4
+        quad, name = torsions[1]
+        self.assertEqual(name, "C1-C2-C3-C4")
+        self.assertEqual(quad, [1, 2, 3, 4])                          # indices in the full topology
+
+    def test_symmetric_ethane_has_no_rotatable_torsion(self):
+        import mdtraj as md
+        top = md.Topology()
+        residue = top.add_residue("UNL", top.add_chain())
+        c1, c2 = (top.add_atom(f"C{i}", md.element.carbon, residue) for i in (1, 2))
+        top.add_bond(c1, c2)
+        for i, carbon in enumerate((c1, c1, c1, c2, c2, c2)):
+            top.add_bond(carbon, top.add_atom(f"H{i + 1}", md.element.hydrogen, residue))
+        self.assertEqual(_guest_torsions(top, resname="UNL"), [])
+
+    def test_missing_guest_residue_is_an_error(self):
+        with self.assertRaisesRegex(ValueError, "no residue named XYZ"):
+            _guest_torsions(chain_topology(), resname="XYZ")
+
+
+class TransitionTests(unittest.TestCase):
+    def test_counts_hops_between_states(self):
+        theta = [60, 62, 180, 178, 300, 60, 61]                       # g+ t t g- g+
+        self.assertEqual(count_transitions(theta), 3)
+
+    def test_jitter_across_a_boundary_is_not_counted(self):
+        theta = [60, 115, 125, 118, 124, 60, 180]                     # 120 is the g+/t boundary
+        self.assertEqual(count_transitions(theta), 1)                 # only the final hop into t
+
+    def test_negative_angles_and_wrap_around(self):
+        self.assertEqual(count_transitions([-60, 300, -170, 190, 170]), 1)   # g- g- t t t
+
+    def test_frames_never_in_a_core_give_no_transition(self):
+        self.assertEqual(count_transitions([0, 5, -5, 120, 240]), 0)
+
+
+class JsHalvesTests(unittest.TestCase):
+    def test_identical_halves_give_zero(self):
+        self.assertAlmostEqual(_js_halves([60, 180, 300, 60, 180, 300]), 0.0)
+
+    def test_disjoint_halves_give_one(self):
+        self.assertAlmostEqual(_js_halves([60.0] * 50 + [180.0] * 50), 1.0)
+
+    def test_wraps_before_binning(self):
+        self.assertAlmostEqual(_js_halves([-60.0] * 10 + [300.0] * 10), 0.0)
+
+
+class DihedralPlotTests(unittest.TestCase):
+    def test_heatmaps_colour_zero_to_ten_and_show_the_counts(self):
+        windows = ["a000", "a015", "p000"]
+        transitions = np.array([[0, 3], [12, 1], [5, 10]])
+        js = np.array([[0.0, 0.1], [0.5, 0.0], [0.05, 0.9]])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "dihedrals.jpg"
+            fig = plot_dihedral_overview(windows, ["C1-C2-C3-C4", "C2-C3-C4-C5"],
+                                         transitions, js, out)
+            self.assertTrue(out.is_file())
+        left, right = fig.axes[0], fig.axes[1]
+        self.assertEqual(left.images[0].get_clim(), (0, MAX_TRANSITIONS_COLOUR))
+        np.testing.assert_array_equal(left.images[0].get_array(), transitions)
+        self.assertEqual(sorted(t.get_text() for t in left.texts),
+                         sorted(str(v) for v in transitions.ravel()))
+        np.testing.assert_allclose(right.images[0].get_array(), js)
+        self.assertEqual([t.get_text() for t in left.get_yticklabels()], windows)
 
 
 if __name__ == "__main__":

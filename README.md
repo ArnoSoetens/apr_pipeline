@@ -447,7 +447,7 @@ The default for both is `analysis.enhanced` in `data/inputs/config.toml` (`true`
 
 Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhanced adds `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg` (DM1-G1 distance per
 attach window, 1st/2nd half of the frames, rims dotted), `plots/attach_angle_grid.jpg` (DM2-DM1-G1
-angle, cone wall dotted),
+angle, cone wall dotted), `plots/dihedral_overview.jpg` (guest torsions, see below),
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
 (`method`, `attach_fractions`, `pull_distances`, `overlap`, `monotonicity_attach`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions
@@ -532,6 +532,19 @@ is concave. For each neighbouring pair z = (rise) / sqrt(SEM_i^2 + SEM_j^2) with
 SEM; a pair is a violation when z > z_crit = Phi^-1(1 - 0.05/(K-1)) (one-sided, Bonferroni over the
 K-1 pairs; 2.61 for 12 windows). `monotonic` is false when there is any violation; `violations`
 lists their lambda pair, rise (kcal/mol) and z.
+
+`plots/dihedral_overview.jpg` (with `--enhanced`) has two heatmaps with every window folder (a000 ...
+p0NN) as a row and every rotatable guest torsion as a column. The torsions come from RDKit's
+non-ring torsion list of the guest, built from the bonds in the window topology (no atom types or
+bond orders needed; a symmetric rotor such as CH3-CH3 has none, and then no plot is made). Left:
+the number of transitions between the g+/t/g- rotamer states (cores of ±30° around 60/180/300°; a
+frame between cores keeps its last state, so jitter at a boundary does not count), coloured from 0
+to 10 (≥ 10 shown as 10) with the count in each cell. Right: the Jensen-Shannon divergence (bits,
+10° bins) between the first and second half of the window: 0 = same distribution, 1 = no overlap.
+A torsion with few transitions and a high JS was in one state for the first half and another for
+the second. Note that left- and right-handed perfluoroalkyl helices (about ±165°) both fall in the
+t core, so a helix reversal is not a transition; a carboxylate O-C-C-C torsion (two equivalent O)
+hops often without anything physically changing.
 
 
 ## Dihedral distributions

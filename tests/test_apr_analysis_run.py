@@ -57,6 +57,7 @@ class ApraAnalysisRunTests(unittest.TestCase):
         self.assertEqual(calls["plot_path"], plots / "binding_free_energy.jpg")
         self.assertIsNone(calls["grid_path"])
         self.assertIsNone(calls["angle_grid_path"])
+        self.assertIsNone(calls["dihedral_path"])
         self.assertIsNone(calls["convergence_path"])
         self.assertFalse(calls["enhanced"])
         histograms.assert_not_called()
@@ -68,6 +69,7 @@ class ApraAnalysisRunTests(unittest.TestCase):
         plots = self.dp / "plots"
         self.assertEqual(calls["grid_path"], plots / "attach_windows_grid.jpg")
         self.assertEqual(calls["angle_grid_path"], plots / "attach_angle_grid.jpg")
+        self.assertEqual(calls["dihedral_path"], plots / "dihedral_overview.jpg")
         self.assertEqual(calls["convergence_path"], plots / "convergence_plot.jpg")
         self.assertTrue(calls["enhanced"])
         self.assertEqual(histograms.call_args.args[1], plots / "pull_window_histograms.jpg")

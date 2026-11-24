@@ -23,6 +23,7 @@ from datapoints import PLOTS
 # --- values from config.toml ---
 COMPLEX = CFG["naming"]["complex_prefix"]
 HOST = CFG["naming"]["host_prefix"]
+GUEST = CFG["naming"]["guest_prefix"]
 RIM_ATOM_GROUPS = CFG["apr"]["restraints"]["walls"]["distance"]["rim_atom_groups"]
 INITIAL_DISTANCE = CFG["apr"]["initial_distance"]
 METHOD = get_method()                     # "ti-block" or "mbar-autoc"
@@ -617,9 +618,146 @@ def monotonicity_check(dl_vals, dU, alpha=0.05):
             "max_z": float(np.max(z)) if pairs else None, "violations": violations}
 
 
+ROTAMER_CENTERS = (60.0, 180.0, 300.0)      # g+, t, g- (degrees)
+ROTAMER_CORE = 30.0                         # a frame belongs to a state within +-30 deg of it
+MAX_TRANSITIONS_COLOUR = 10                 # colour scale of the transition heatmap: 0-10
+
+
+def _guest_torsions(topology, resname=GUEST):
+    """Rotatable guest torsions: RDKit's non-ring torsion list (TorsionFingerprints) of the guest
+    residue, built from the bonds of the simulated topology (MDTraj) with every bond single, so
+    no atom types or bond orders are needed. Returns [(0-based atom indices, "A-B-C-D")]."""
+    from rdkit import Chem
+    from rdkit.Chem import TorsionFingerprints
+
+    residue_atoms = [a for a in topology.atoms if a.residue.name == resname]
+    if not residue_atoms:
+        raise ValueError(f"no residue named {resname} in the topology")
+    if len({a.residue.index for a in residue_atoms}) > 1:
+        raise ValueError(f"more than one residue named {resname} in the topology")
+    local = {atom.index: i for i, atom in enumerate(residue_atoms)}
+
+    mol = Chem.RWMol()
+    for atom in residue_atoms:
+        rd_atom = Chem.Atom(int(atom.element.atomic_number))
+        rd_atom.SetNoImplicit(True)
+        mol.AddAtom(rd_atom)
+    for a, b in topology.bonds:
+        if a.index in local and b.index in local:
+            mol.AddBond(local[a.index], local[b.index], Chem.BondType.SINGLE)
+    mol = mol.GetMol()
+    mol.UpdatePropertyCache(strict=False)
+    Chem.GetSymmSSSR(mol)
+
+    nonring, _ = TorsionFingerprints.CalculateTorsionLists(mol)
+    torsions = []
+    for atom_sets, _ in nonring:
+        atoms = [residue_atoms[i] for i in atom_sets[0]]
+        torsions.append(([a.index for a in atoms], "-".join(a.name for a in atoms)))
+    return sorted(torsions, key=lambda t: sorted(t[0][1:3]))     # by the central bond
+
+
+def count_transitions(theta_deg, centers=ROTAMER_CENTERS, core=ROTAMER_CORE):
+    """Transitions between rotamer states, counted with core regions: a frame is assigned to a
+    state only within +-core of its centre; between cores it keeps its last state, so jitter
+    across a boundary is not counted."""
+    theta = np.mod(np.asarray(theta_deg, dtype=float), 360.0)
+    c = np.asarray(centers, dtype=float)
+    distance = np.abs((theta[:, None] - c[None, :] + 180.0) % 360.0 - 180.0)
+    state = np.where((distance <= core).any(axis=1), np.argmin(distance, axis=1), -1)
+    assigned = state[state >= 0]
+    return int(np.count_nonzero(assigned[1:] != assigned[:-1]))
+
+
+def _js_divergence(a, b, bins):
+    """Jensen-Shannon divergence in bits: 0 = identical histograms, 1 = no overlap."""
+    p = np.histogram(a, bins=bins)[0].astype(float)
+    q = np.histogram(b, bins=bins)[0].astype(float)
+    p, q = p / max(p.sum(), 1.0), q / max(q.sum(), 1.0)
+    m = 0.5 * (p + q)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        kl_p = np.where(p > 0, p * np.log2(p / m), 0.0).sum()
+        kl_q = np.where(q > 0, q * np.log2(q / m), 0.0).sum()
+    return float(0.5 * kl_p + 0.5 * kl_q)
+
+
+def _js_halves(theta_deg, bin_width=10.0):
+    """JS divergence between the 1st and 2nd half of a dihedral time series (0-360 deg bins)."""
+    theta = np.mod(np.asarray(theta_deg, dtype=float), 360.0)
+    return _js_divergence(*_halves(theta), np.arange(0.0, 360.0 + bin_width, bin_width))
+
+
+def plot_dihedral_overview(windows, names, transitions, js, out_path):
+    """Two heatmaps, windows (rows) x dihedrals (columns): transitions (colour 0-10, >= 10 shown
+    as 10, the count written in each cell) and the JS divergence of the 1st vs 2nd half.
+    Returns the (closed) figure."""
+    transitions = np.asarray(transitions)
+    js = np.asarray(js, dtype=float)
+    width = max(10.0, 2 * (0.5 * len(names) + 2.0))
+    fig, axes = plt.subplots(1, 2, figsize=(width, 0.28 * len(windows) + 2.5), sharey=True)
+    image = axes[0].imshow(transitions, aspect="auto", cmap="viridis", vmin=0,
+                           vmax=MAX_TRANSITIONS_COLOUR, interpolation="nearest")
+    for i in range(transitions.shape[0]):
+        for j in range(transitions.shape[1]):
+            colour = "black" if transitions[i, j] >= 0.6 * MAX_TRANSITIONS_COLOUR else "white"
+            axes[0].text(j, i, str(int(transitions[i, j])), ha="center", va="center",
+                         fontsize=6, color=colour)
+    bar = fig.colorbar(image, ax=axes[0], extend="max", fraction=0.046)
+    bar.set_label(f"transitions (≥{MAX_TRANSITIONS_COLOUR} shown as {MAX_TRANSITIONS_COLOUR})")
+    axes[0].set_title("Rotamer transitions per window")
+
+    js_image = axes[1].imshow(js, aspect="auto", cmap="magma_r", vmin=0.0,
+                              vmax=max(0.2, float(js.max()) if js.size else 0.2),
+                              interpolation="nearest")
+    fig.colorbar(js_image, ax=axes[1], fraction=0.046).set_label("JS divergence (bits)")
+    axes[1].set_title("1st vs 2nd half (JS divergence)")
+
+    for ax in axes:
+        ax.set_xticks(range(len(names)))
+        ax.set_xticklabels(names, rotation=90, fontsize=7)
+    axes[0].set_yticks(range(len(windows)))
+    axes[0].set_yticklabels(windows, fontsize=7)
+    fig.suptitle("Guest dihedrals: g+/t/g- states (cores ±30° around 60/180/300°)")
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    return fig
+
+
+def dihedral_overview(windows_dir, out_path, complex_prefix=COMPLEX, trajectory=TRAJECTORY):
+    """Transitions and half-vs-half JS divergence of every rotatable guest torsion in every
+    window folder (attach and pull, in folder order) -> plot. Returns the figure, or None when
+    the guest has no rotatable torsions."""
+    import mdtraj as md
+
+    windows_dir = Path(windows_dir)
+    windows = sorted(w.name for w in windows_dir.iterdir()
+                     if w.is_dir() and (w / trajectory).is_file())
+    prmtop = windows_dir / windows[0] / f"{complex_prefix}-dum.prmtop"
+    topology = md.load_prmtop(str(prmtop))
+    torsions = _guest_torsions(topology)
+    if not torsions:
+        print("no rotatable guest torsions: no dihedral plot", flush=True)
+        return None
+    needed = sorted({i for quad, _ in torsions for i in quad})
+    local = np.array([[needed.index(i) for i in quad] for quad, _ in torsions])
+
+    transitions = np.zeros((len(windows), len(torsions)), dtype=int)
+    js = np.zeros((len(windows), len(torsions)))
+    for row, window in enumerate(windows):
+        traj = md.load(str(windows_dir / window / trajectory), top=str(prmtop),
+                       atom_indices=needed)
+        angles = np.degrees(md.compute_dihedrals(traj, local, periodic=False))
+        for col in range(len(torsions)):
+            transitions[row, col] = count_transitions(angles[:, col])
+            js[row, col] = _js_halves(angles[:, col])
+    return plot_dihedral_overview(windows, [name for _, name in torsions], transitions, js,
+                                  out_path)
+
+
 def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_name="guest",
                           complex_prefix=COMPLEX, boot_cycles=BOOT_CYCLES, enhanced=False,
-                          convergence_path=None, angle_grid_path=None):
+                          convergence_path=None, angle_grid_path=None, dihedral_path=None):
     """Returns (results dict, simulation_data). dG values in kcal/mol.
 
     The free energy at several fractions of the trajectory (CONVERGENCE_FRACTIONS) is only
@@ -713,6 +851,12 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
             print(f"warning: no cone line in the attach angle grid: {e}", flush=True)
         attach_angle_grid(fe, angle_grid_path, labels=attach_window_names, cone=cone)
 
+    if dihedral_path:
+        try:
+            dihedral_overview(windows_dir, dihedral_path, complex_prefix)
+        except Exception as e:                       # a plot detail must not block results.json
+            print(f"warning: no dihedral plot: {e}", flush=True)
+
     out = {"dG_bind": dg, "dG_sem": dg_sem, "units": "kcal/mol",
            "ref_state_work": float(ref_work),
            "phases": {phase: _phase_details(res, phase) for phase in ("attach", "pull")},
@@ -742,7 +886,8 @@ def run(dp, complex_prefix=COMPLEX, enhanced=False):
     """Analyze one fully simulated data point: <dp>/results.json and plots in <dp>/plots/.
 
     Always binding_free_energy.jpg; enhanced=True also the convergence plot, the attach-window
-    distance and angle grids, the pull-window histograms and extra metadata in results.json.
+    distance and angle grids, the guest-dihedral heatmaps, the pull-window histograms and extra
+    metadata in results.json.
     """
     dp = Path(dp)
     windows = dp / "windows"
@@ -762,6 +907,7 @@ def run(dp, complex_prefix=COMPLEX, enhanced=False):
         title_name=dp.name, complex_prefix=complex_prefix, enhanced=enhanced,
         convergence_path=(plots / "convergence_plot.jpg") if enhanced else None,
         angle_grid_path=(plots / "attach_angle_grid.jpg") if enhanced else None,
+        dihedral_path=(plots / "dihedral_overview.jpg") if enhanced else None,
     )
     if enhanced:
         pull_window_histograms(sim_data, plots / "pull_window_histograms.jpg")
