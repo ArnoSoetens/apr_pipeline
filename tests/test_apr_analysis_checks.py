@@ -70,6 +70,23 @@ def vertical_lines(ax):
     return out
 
 
+def half_bars(ax):
+    """[(label, signed heights, left edges)] of the bar sets in a grid panel."""
+    return [(c.get_label(), np.array([p.get_height() for p in c.patches]),
+             np.array([p.get_x() for p in c.patches])) for c in ax.containers]
+
+
+def shaded_bands(ax):
+    """(lo, hi) of the shaded band(s) in a grid panel."""
+    bands = []
+    for p in ax.patches:
+        if p.get_gid() == "band":
+            x = p.get_path().transformed(p.get_patch_transform()).vertices[:, 0] \
+                if hasattr(p, "get_patch_transform") else np.asarray(p.get_xy())[:, 0]
+            bands.append((round(float(x.min()), 6), round(float(x.max()), 6)))
+    return bands
+
+
 class HalvesTests(unittest.TestCase):
     def test_odd_frame_count_gives_the_extra_frame_to_the_second_half(self):
         first, second = _halves(np.arange(401))
@@ -122,36 +139,44 @@ class AttachGridTests(unittest.TestCase):
             self.assertIn((6.0, "--", "red"), lines)
             dotted = sorted(x for x, style, _ in lines if style == ":")
             self.assertEqual(dotted, [3.0, 11.0])
-            outline_colours = {p.get_edgecolor()[:3] for p in ax.patches if not p.get_fill()}
-            self.assertEqual(len(outline_colours), 2)          # 1st and 2nd half
+            self.assertEqual([label for label, _, _ in half_bars(ax)],
+                             ["1st half (up)", "2nd half (down)"])
+            self.assertEqual(shaded_bands(ax), [(3.0, 11.0)])
         self.assertEqual([ax.get_title() for ax in panels], ["a000", "a001", "p000 (λ=1)"])
         self.assertFalse(fig.axes[3].axison)                    # unused slot switched off
 
-    def test_halves_are_plotted_separately(self):
-        windows = [np.concatenate([np.full(200, 5.0), np.full(200, 7.0)])]
+    def test_halves_are_mirrored_solid_bars_on_shared_bins(self):
+        windows = [np.concatenate([np.full(200, 5.0), np.full(200, 7.0), [7.0]])]
         fig = attach_window_grid(FakeFe(windows, [6.0]), self.out, labels=["a000"])
-        ax = fig.axes[0]
-        outlines = [p for p in ax.patches if not p.get_fill()]
-        self.assertEqual(len(outlines), 2)
-        means = []
-        for patch in outlines:
-            xy = patch.get_xy()
-            tops = xy[xy[:, 1] > 0]
-            means.append(tops[:, 0].mean())
-        self.assertLess(means[0], 6.0)                          # 1st half sits at 5 Å
-        self.assertGreater(means[1], 6.0)                       # 2nd half sits at 7 Å
+        (_, up, up_x), (_, down, down_x) = half_bars(fig.axes[0])
+        np.testing.assert_allclose(up_x, down_x)                 # same bins for both halves
+        self.assertEqual((up.sum(), down.sum()), (200, -201))    # 1st half up, 2nd half down
+        self.assertLess(up_x[up > 0].max(), 6.0)                 # 1st half sits at 5 Å
+        self.assertGreater(down_x[down < 0].min(), 6.0)          # 2nd half sits at 7 Å
+        bars = [p for p in fig.axes[0].patches if p.get_height() != 0]
+        self.assertTrue(all(p.get_fill() and p.get_alpha() in (None, 1.0) for p in bars))
+        low, high = fig.axes[0].get_ylim()
+        self.assertAlmostEqual(low, -high)                       # symmetric around zero
+        self.assertGreaterEqual(high, 201)
+
+    def test_y_ticks_show_counts_without_a_minus_sign(self):
+        fig = attach_window_grid(FakeFe(self.windows, self.targets), self.out)
+        formatter = fig.axes[0].yaxis.get_major_formatter()
+        self.assertEqual(formatter(-20.0, 0), "20")
+        self.assertEqual(formatter(15.0, 0), "15")
 
     def test_no_rim_lines_without_rims(self):
         fig = attach_window_grid(FakeFe(self.windows, self.targets), self.out)
         for ax in fig.axes[:3]:
             self.assertFalse([x for x, style, _ in vertical_lines(ax) if style == ":"])
+            self.assertEqual(shaded_bands(ax), [])
         self.assertEqual(fig.axes[2].get_title(), "a002")
 
     def test_legend_goes_in_the_first_unused_slot_or_above_the_panels(self):
         fig = attach_window_grid(FakeFe(self.windows, self.targets), self.out, rims=(3.0, 11.0))
         legend = fig.axes[3].get_legend()                       # 3 windows, 5 slots
         self.assertEqual([t.get_text() for t in legend.get_texts()],
-                         ["1st half", "2nd half", "target", "rim"])
+                         ["1st half (up)", "2nd half (down)", "target", "rim", "between rims"])
         self.assertFalse(fig.legends)
         fig = attach_window_grid(FakeFe(self.windows[:2], [6.0, 6.0]), self.out, ncols=2)
         self.assertEqual(len(fig.legends), 1)                   # every slot used
@@ -220,15 +245,21 @@ class AttachAngleGridTests(unittest.TestCase):
             lines = vertical_lines(ax)
             self.assertIn((180.0, "--", "red"), [(round(x, 6), s, c) for x, s, c in lines])
             self.assertEqual([x for x, style, _ in lines if style == ":"], [132.0])
-            edges = [p.get_xy()[:, 0] for p in ax.patches if not p.get_fill()]
-            self.assertAlmostEqual(min(e.min() for e in edges), window.min(), places=6)
-            self.assertAlmostEqual(max(e.max() for e in edges), window.max(), places=6)
+            (_, _, left), _ = half_bars(ax)
+            right = max(p.get_x() + p.get_width() for p in ax.containers[0].patches)
+            self.assertAlmostEqual(left.min(), window.min(), places=6)
+            self.assertAlmostEqual(right, window.max(), places=6)
+            self.assertEqual(shaded_bands(ax), [(132.0, 180.0)])
+        legend = fig.axes[2].get_legend()
+        self.assertEqual([t.get_text() for t in legend.get_texts()][-2:],
+                         ["cone wall", "inside cone"])
         self.assertEqual(fig.axes[1].get_title(), "p000 (λ=1)")
         self.assertEqual(fig.axes[1].get_xlabel(), "DM2-DM1-G1 angle (degrees)")
 
     def test_without_cone_no_dotted_line(self):
         fig = attach_angle_grid(FakeAngleFe([np.linspace(150.0, 170.0, 100)]), self.out)
         self.assertFalse([x for x, style, _ in vertical_lines(fig.axes[0]) if style == ":"])
+        self.assertEqual(shaded_bands(fig.axes[0]), [])
 
     def test_refuses_when_there_is_no_angle_restraint(self):
         fe = FakeAngleFe([np.linspace(150.0, 170.0, 100)])

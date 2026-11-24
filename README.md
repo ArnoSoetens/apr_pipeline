@@ -446,8 +446,9 @@ python scripts/analysis.py --no-enhanced ...    # without them
 The default for both is `analysis.enhanced` in `data/inputs/config.toml` (`true`: with the extras).
 
 Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhanced adds `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg` (DM1-G1 distance per
-attach window, 1st/2nd half of the frames, rims dotted), `plots/attach_angle_grid.jpg` (DM2-DM1-G1
-angle, cone wall dotted), `plots/dihedral_overview.jpg` (guest torsions, see below),
+attach window as a mirrored histogram: 1st half of the frames up, 2nd half down, rims dotted with
+the region between them shaded), `plots/attach_angle_grid.jpg` (DM2-DM1-G1 angle, same style, cone
+wall dotted with the inside of the cone shaded), `plots/dihedral_overview.jpg` (guest torsions, see below),
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
 (`method`, `attach_fractions`, `pull_distances`, `overlap`, `monotonicity_attach`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions

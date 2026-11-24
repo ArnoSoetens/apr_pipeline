@@ -8,6 +8,9 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")                 # must come before importing pyplot
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter
 
 from openff.units import unit as openff_unit
 from paprika import analysis
@@ -42,8 +45,10 @@ def pull_window_histograms(simulation_data, out_path, restraint_index=0):
     plt.close()
 
 
-HALF_COLORS = ("tab:blue", "tab:orange")
-HALF_LABELS = ("1st half", "2nd half")
+HALF_COLORS = ("#3b75af", "#ef8636")       # blue, orange; drawn at full opacity
+HALF_LABELS = ("1st half (up)", "2nd half (down)")
+BAND_COLOR = "0.92"
+GRID_BINS = 30
 
 
 def _halves(values):
@@ -78,10 +83,12 @@ def _grid_title(label):
     return f"{label} (λ=1)" if label == "p000" else label
 
 
-def _window_grid(values, targets, labels, out_path, marks=(), mark_label="", title="",
-                 xlabel="", ncols=5):
-    """One histogram per window, 1st half of the frames blue and 2nd half orange, the target
-    as a red dashed line and each x in marks as a dotted line. Returns the (closed) figure."""
+def _window_grid(values, targets, labels, out_path, marks=(), mark_label="", band=None,
+                 band_label="", title="", xlabel="", ncols=5):
+    """One mirrored histogram per window: the 1st half of the frames as solid bars upwards
+    (blue), the 2nd half downwards (orange), on the same bins. The target is a red dashed
+    line, each x in marks a dotted line, band=(lo, hi) a grey region behind the bars.
+    Returns the (closed) figure."""
     num_win = len(values)
     if len(labels) != num_win:
         raise ValueError(f"{len(labels)} labels for {num_win} attach windows")
@@ -91,27 +98,43 @@ def _window_grid(values, targets, labels, out_path, marks=(), mark_label="", tit
                              sharex=True, sharey=True)
     axes = np.atleast_1d(axes).flatten()
 
+    highest = 1
     for k in range(num_win):
         ax = axes[k]
         window_values = np.asarray(values[k], dtype=float).reshape(-1)
-        edges = np.histogram_bin_edges(window_values, bins=40)
-        for part, color, name in zip(_halves(window_values), HALF_COLORS, HALF_LABELS):
-            ax.hist(part, bins=edges, histtype="stepfilled", color=color, alpha=0.2)
-            ax.hist(part, bins=edges, histtype="step", color=color, linewidth=1.2, label=name)
-        ax.axvline(targets[k], color="red", linestyle="--", linewidth=1, label="target")
-        for i, mark in enumerate(marks):
-            ax.axvline(mark, color="0.3", linestyle=":", linewidth=1.2,
-                       label=mark_label if i == 0 else None)
+        edges = np.histogram_bin_edges(window_values, bins=GRID_BINS)
+        if band is not None:
+            ax.axvspan(*band, color=BAND_COLOR, linewidth=0, zorder=0, gid="band")
+        for sign, part, color, name in zip((1, -1), _halves(window_values), HALF_COLORS,
+                                           HALF_LABELS):
+            counts, _ = np.histogram(part, bins=edges)
+            ax.bar(edges[:-1], sign * counts, width=np.diff(edges), align="edge", color=color,
+                   linewidth=0, label=name, zorder=2)
+            highest = max(highest, int(counts.max(initial=0)))
+        ax.axhline(0, color="0.2", linewidth=0.6, zorder=3)
+        ax.axvline(targets[k], color="red", linestyle="--", linewidth=1.2, zorder=4)
+        for mark in marks:
+            ax.axvline(mark, color="0.25", linestyle=":", linewidth=1.3, zorder=4)
         ax.set_title(_grid_title(labels[k]), fontsize=9)
         ax.tick_params(labelsize=7)
+        ax.spines[["top", "right"]].set_visible(False)
         if k + ncols >= num_win:                     # no panel below: ticks and axis label
             ax.tick_params(labelbottom=True)
             ax.set_xlabel(xlabel, fontsize=8)
 
+    axes[0].set_ylim(-1.08 * highest, 1.08 * highest)    # shared, so symmetric everywhere
+    axes[0].yaxis.set_major_formatter(FuncFormatter(lambda y, _: f"{abs(y):g}"))  # counts
+
     for k in range(num_win, len(axes)):              # switch off unused slots
         axes[k].axis("off")
 
-    handles, names = axes[0].get_legend_handles_labels()
+    handles = [Patch(color=c, label=n) for c, n in zip(HALF_COLORS, HALF_LABELS)]
+    handles.append(Line2D([], [], color="red", linestyle="--", label="target"))
+    if marks:
+        handles.append(Line2D([], [], color="0.25", linestyle=":", label=mark_label))
+    if band is not None:
+        handles.append(Patch(color=BAND_COLOR, label=band_label))
+    names = [h.get_label() for h in handles]
     fig.suptitle(title, y=1.0)
     if num_win < len(axes):                          # legend in the first unused slot
         axes[num_win].legend(handles, names, loc="center", fontsize=9, frameon=False)
@@ -131,7 +154,8 @@ def _attach_labels(labels, num_win):
 
 def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0, phase="attach",
                        ncols=5):
-    """Distance restraint (DM1-G1, Å) per attach window: halves, target, rims as dotted lines.
+    """Distance restraint (DM1-G1, Å) per attach window: mirrored halves, target, rims as
+    dotted lines with the region between them shaded.
 
     labels: window folder per panel (the λ=1 window is p000 with continuous_apr);
     a000, a001, ... when not given. Returns the (closed) figure.
@@ -140,8 +164,11 @@ def attach_window_grid(fe, out_path, labels=None, rims=None, restraint_index=0, 
     # ordered targets for this restraint, in the same window order as simulation_data
     targets = fe.prepare_data(phase)[5][restraint_index].magnitude
     values = [_mag(window[restraint_index]) for window in data]
+    rims = tuple(rims or ())
     return _window_grid(values, targets, _attach_labels(labels, len(data)), out_path,
-                        marks=tuple(rims or ()), mark_label="rim",
+                        marks=rims, mark_label="rim",
+                        band=(min(rims), max(rims)) if len(rims) == 2 else None,
+                        band_label="between rims",
                         title="Attach phase: DM1-G1 distance per window",
                         xlabel="DM1-G1 distance (Å)", ncols=ncols)
 
@@ -163,8 +190,9 @@ def _first_angle_index(active_restraints):
 
 
 def attach_angle_grid(fe, out_path, labels=None, cone=None, phase="attach", ncols=5):
-    """First guest angle restraint (DM2-DM1-G1, degrees) per attach window: halves, target,
-    and the cone wall (r2, where its force starts) as a dotted line. Returns the figure."""
+    """First guest angle restraint (DM2-DM1-G1, degrees) per attach window: mirrored halves,
+    target, and the cone wall (r2, where its force starts) as a dotted line with the inside of
+    the cone (r2 to 180) shaded. Returns the figure."""
     data = fe.simulation_data[phase]
     prepared = fe.prepare_data(phase)
     index = _first_angle_index(prepared[3])
@@ -172,6 +200,8 @@ def attach_angle_grid(fe, out_path, labels=None, cone=None, phase="attach", ncol
     values = [_degrees(window[index]) for window in data]
     return _window_grid(values, targets, _attach_labels(labels, len(data)), out_path,
                         marks=() if cone is None else (cone,), mark_label="cone wall",
+                        band=None if cone is None else (cone, 180.0),
+                        band_label="inside cone",
                         title="Attach phase: DM2-DM1-G1 angle per window",
                         xlabel="DM2-DM1-G1 angle (degrees)", ncols=ncols)
 
