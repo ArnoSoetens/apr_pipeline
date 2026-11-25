@@ -122,6 +122,19 @@ if needed). `rim_offset` expands the flat region: setting it to 3 Å makes `r2`
 3 Å smaller and `r3` 3 Å larger than their fitted rim distances. Rim atom
 groups must be supplied in the config when rim mode is selected.
 
+`guest = "centroid"` (default `"g1"`) puts the wall on the distance from DM1 to the
+centroid of all guest atoms instead of G1, as an Amber group restraint (`iat=…,-1` with
+`igr2`). Amber uses the unweighted, coordinate-averaged position of a group, not the centre
+of mass, so the force is shared equally over the guest atoms and does not turn the guest. In
+rim mode the flat region is then near/far rim ∓ (guest radius + `radius_offset`), where the
+guest radius is the largest centroid-to-heavy-atom distance in the setup structure:
+at `radius_offset = 0` the wall starts where the whole guest has left the cavity along the
+axis, and `-1` starts it 1 Å earlier. `rim_offset` is not used then. Setup refuses a guest
+whose centroid starts outside the flat region. The same `guest` key under
+`[apr.restraints.walls.cone]` puts the cone on the D2-D1-guest centroid angle (and the
+start check on the centroid). The analysis measures a group wall from the trajectory with the
+same unweighted centroid.
+
 ## Setup: serial or as an array
 
 ```
@@ -448,7 +461,8 @@ The default for both is `analysis.enhanced` in `data/inputs/config.toml` (`true`
 Each data point gets `results.json` and `plots/binding_free_energy.jpg`. Enhanced adds `plots/convergence_plot.jpg`, `plots/attach_windows_grid.jpg` (DM1-G1 distance per
 attach window as a mirrored histogram: 1st half of the frames up, 2nd half down, rims dotted with
 the region between them shaded), `plots/attach_angle_grid.jpg` (DM2-DM1-G1 angle, same style, cone
-wall dotted with the inside of the cone shaded), `plots/dihedral_overview.jpg` (guest torsions, see below),
+wall dotted with the inside of the cone shaded; the legend says when the cone acts on the guest
+centroid rather than the plotted G1), `plots/dihedral_overview.jpg` (guest torsions, see below),
 `plots/pull_window_histograms.jpg` and some extra metadata in `results.json`
 (`method`, `attach_fractions`, `pull_distances`, `overlap`, `monotonicity_attach`). Without enhanced the free
 energy is only computed for the full trajectories, not for the ten fractions
@@ -507,7 +521,8 @@ instead of being silently discarded.
 When distance walls are present in the attachment windows' `disang.rest`
 files, `results.json` also contains `distance_wall`. For the configured
 single-wall setup, it contains that wall's summary directly; for multiple
-walls, it contains a `walls` list with one summary per restraint pair. The
+walls, it contains a `walls` list with one summary per restraint pair. A group wall (guest
+centroid) has `-1` in `amber_atom_indices_1based` and its atoms in `amber_groups_1based`. The
 analysis reconstructs the restraint potential from each sampled wall distance and its Amber `r1`–`r4` and
 `rk2`/`rk3` parameters. In the parabolic regions the Amber
 energy is `rk * (distance - boundary)²` (without a one-half factor); beyond

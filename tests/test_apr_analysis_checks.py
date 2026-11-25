@@ -211,6 +211,19 @@ class ConeWallTests(unittest.TestCase):
     def test_no_cone_gives_none(self):
         self.assertIsNone(self.read(DISANG))      # guest angles (r2 == r3) and the distance wall
 
+    def test_centroid_cone_as_paprika_writes_it_is_found_and_flagged(self):
+        group_cone = ("&rst iat= 157,156,-1,       r1=  127.00000, r2=  132.00000, r3=  180.00000, "
+                      "r4=  180.00000, rk2=  100.00000, rk3=  100.00000,\n     igr3= 148,149,150,  &end\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "disang.rest"
+            path.write_text(DISANG + group_cone)
+            self.assertEqual(_read_cone_wall(path), 132.0)
+            self.assertEqual(_read_cone_wall(path, with_group=True), (132.0, True))
+            path.write_text(DISANG + CONE)
+            self.assertEqual(_read_cone_wall(path, with_group=True), (132.0, False))
+            path.write_text(DISANG)
+            self.assertEqual(_read_cone_wall(path, with_group=True), (None, False))
+
 
 class FakeAngleFe:
     """Attach data as pAPRika has it: a distance restraint first, then an angle in radians."""
@@ -255,6 +268,14 @@ class AttachAngleGridTests(unittest.TestCase):
                          ["cone wall", "inside cone"])
         self.assertEqual(fig.axes[1].get_title(), "p000 (λ=1)")
         self.assertEqual(fig.axes[1].get_xlabel(), "DM2-DM1-G1 angle (degrees)")
+
+    def test_centroid_cone_is_named_in_the_legend(self):
+        angles = [np.linspace(150.0, 170.0, 100), np.linspace(160.0, 179.0, 100)]
+        fig = attach_angle_grid(FakeAngleFe(angles), self.out, labels=["a000", "p000"], cone=132.0,
+                                cone_on_centroid=True)
+        legend = fig.axes[2].get_legend()
+        self.assertEqual([t.get_text() for t in legend.get_texts()][-2:],
+                         ["cone wall (on guest centroid)", "inside cone"])
 
     def test_without_cone_no_dotted_line(self):
         fig = attach_angle_grid(FakeAngleFe([np.linspace(150.0, 170.0, 100)]), self.out)

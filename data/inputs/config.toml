@@ -94,7 +94,12 @@ rim_atom_groups = [
     [10, 31, 52, 73, 94, 115, 136],
     [20, 41, 62, 83, 104, 125, 146],
 ]
-rim_offset = 2.0
+guest = "centroid"       # "g1": wall on the DM1-G1 distance; "centroid": on the distance from DM1
+                         # to the centroid of all guest atoms (Amber group restraint)
+rim_offset = 2.0         # guest = "g1": r2/r3 = near/far rim -/+ rim_offset
+radius_offset = -1.0     # guest = "centroid": r2/r3 = near/far rim -/+ (guest radius + radius_offset);
+                         # guest radius = largest centroid-to-heavy-atom distance, so 0 starts the
+                         # wall where the whole guest has left the cavity along the axis
 parabolic_width = 1.0
 
 r1 = 0.0                  # manual Amber flat-well bounds (Angstroms)
@@ -111,6 +116,7 @@ rk3 = 100.0               # right parabolic force constant (kcal/mol/A^2)
 # angle of the rim nearest DM1 (mean D2-D1-O over its oxygens from walls.distance.rim_atom_groups,
 # which it needs even when the distance wall is manual or off), harmonic below that.
 enabled = false
+guest = "centroid"        # "g1": D2-D1-G1 angle; "centroid": D2-D1-guest centroid (all guest atoms)
 angle_offset = 0.0        # degrees; > 0 widens the cone beyond the rim oxygens, < 0 narrows it
 parabolic_width = 5.0     # degrees between r1 and r2 (linear beyond r1)
 rk2 = 100.0               # kcal/mol/rad^2

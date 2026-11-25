@@ -189,27 +189,32 @@ def _first_angle_index(active_restraints):
     raise ValueError("no angle restraint among the attach restraints")
 
 
-def attach_angle_grid(fe, out_path, labels=None, cone=None, phase="attach", ncols=5):
+def attach_angle_grid(fe, out_path, labels=None, cone=None, phase="attach", ncols=5,
+                      cone_on_centroid=False):
     """First guest angle restraint (DM2-DM1-G1, degrees) per attach window: mirrored halves,
     target, and the cone wall (r2, where its force starts) as a dotted line with the inside of
-    the cone (r2 to 180) shaded. Returns the figure."""
+    the cone (r2 to 180) shaded. cone_on_centroid: the cone acts on the guest centroid, not on
+    the plotted G1, which the legend says. Returns the figure."""
     data = fe.simulation_data[phase]
     prepared = fe.prepare_data(phase)
     index = _first_angle_index(prepared[3])
     targets = _degrees(prepared[5][index])
     values = [_degrees(window[index]) for window in data]
     return _window_grid(values, targets, _attach_labels(labels, len(data)), out_path,
-                        marks=() if cone is None else (cone,), mark_label="cone wall",
+                        marks=() if cone is None else (cone,),
+                        mark_label="cone wall (on guest centroid)" if cone_on_centroid else "cone wall",
                         band=None if cone is None else (cone, 180.0),
                         band_label="inside cone",
                         title="Attach phase: DM2-DM1-G1 angle per window",
                         xlabel="DM2-DM1-G1 angle (degrees)", ncols=ncols)
 
 
-def _read_cone_wall(disang_path):
+def _read_cone_wall(disang_path, with_group=False):
     """r2 (degrees) of the cone wall in an Amber restraint file, or None when there is none.
+    with_group=True gives (r2, True when the third point is an atom group, i.e. the guest
+    centroid) instead, or (None, False).
 
-    The cone is the three-atom flat-bottom block with r1 < r2 < r3 and rk2 > 0; the guest
+    The cone is the three-point flat-bottom block with r1 < r2 < r3 and rk2 > 0; the guest
     angle restraints always have r2 == r3.
     """
     text = Path(disang_path).read_text()
@@ -225,8 +230,10 @@ def _read_cone_wall(disang_path):
                 break
             values[key] = float(match.group(1))
         if len(values) == 4 and values["r1"] < values["r2"] < values["r3"] and values["rk2"] > 0:
+            if with_group:
+                return values["r2"], int(re.findall(r"-?\d+", atoms.group(1))[2]) < 0
             return values["r2"]
-    return None
+    return (None, False) if with_group else None
 
 
 def _mag(x):
@@ -262,8 +269,24 @@ def _fraction_outside_distance(samples, initial_distance, threshold):
     return float(np.count_nonzero(np.abs(samples - initial_distance) > threshold) / samples.size)
 
 
+def _read_groups(block, atom_indices, disang_path):
+    """{"igr<n>": [1-based atoms]} for every iat entry that is -1 (an Amber atom group)."""
+    groups = {}
+    for position, index in enumerate(atom_indices, start=1):
+        if index > 0:
+            continue
+        match = re.search(rf"\bigr{position}\s*=\s*([\d,\s]+)", block, flags=re.IGNORECASE)
+        members = [int(value) for value in re.findall(r"\d+", match.group(1))] if match else []
+        if index != -1 or not members:
+            raise ValueError(f"iat entry {position} is {index} without an igr{position} group "
+                             f"in {disang_path}")
+        groups[f"igr{position}"] = members
+    return groups
+
+
 def _read_distance_walls(disang_path):
-    """Read all two-atom, four-bound distance walls from an Amber restraint file."""
+    """Read all two-point, four-bound distance walls from an Amber restraint file. A point may be
+    an atom group (iat = -1 with igr1/igr2); its members are returned under "groups"."""
     text = Path(disang_path).read_text()
     candidates = []
     for block in re.findall(r"&rst\b(.*?)&end", text, flags=re.IGNORECASE | re.DOTALL):
@@ -296,13 +319,21 @@ def _read_distance_walls(disang_path):
             and parameters["rk2"] > 0
             and parameters["rk3"] > 0
         ):
-            if any(index <= 0 for index in atom_indices):
-                raise ValueError(
-                    f"Group-based distance walls are not supported in {disang_path}"
-                )
-            candidates.append({"atom_indices": atom_indices, **parameters})
+            groups = _read_groups(block, atom_indices, disang_path)
+            candidates.append({"atom_indices": atom_indices, "groups": groups, **parameters})
 
     return candidates
+
+
+def _group_distances(trajectory, wall):
+    """Per-frame distance between the two wall points; a group point is the unweighted mean of
+    its atoms' coordinates (Amber's coordinate-averaged group position, not the centre of mass)."""
+    xyz = np.asarray(trajectory.xyz, dtype=float)
+    points = []
+    for position, index in enumerate(wall["atom_indices"], start=1):
+        atoms = wall["groups"].get(f"igr{position}", [index])
+        points.append(xyz[:, np.asarray(atoms) - 1].mean(axis=1))
+    return np.linalg.norm(points[0] - points[1], axis=1)
 
 
 def _amber_distance_wall_energy(distances, wall):
@@ -359,7 +390,8 @@ def _distance_wall_summary(windows_dir, simulation_data, window_order, topology=
     reference_walls = walls_by_window[0]
     for (_, window), walls in zip(attachment_windows[1:], walls_by_window[1:]):
         for wall_index, (reference, wall) in enumerate(zip(reference_walls, walls)):
-            if wall["atom_indices"] != reference["atom_indices"] or any(
+            if (wall["atom_indices"], wall["groups"]) != (
+                    reference["atom_indices"], reference["groups"]) or any(
                 not np.isclose(wall[key], reference[key], rtol=0.0, atol=1e-5)
                 for key in ("r1", "r2", "r3", "r4", "rk2", "rk3")
             ):
@@ -375,25 +407,30 @@ def _distance_wall_summary(windows_dir, simulation_data, window_order, topology=
         all_active = []
         total_frames = 0
         for simulation_index, window in attachment_windows:
-            if wall_index == 0:
-                # The first generated wall is DM1-G1, the APR distance restraint.
+            if wall_index == 0 and not reference["groups"]:
+                # The first generated wall is DM1-G1, the APR distance restraint (a DM1-guest
+                # centroid wall is a group wall and is measured from the trajectory below).
                 distances = _mag(simulation_data["attach"][simulation_index][0])
             else:
                 if topology is None:
                     raise ValueError(
-                        "A topology is required to analyze additional distance walls"
+                        "A topology is required to analyze additional or group distance walls"
                     )
                 trajectory = load_trajectory(
                     str(Path(windows_dir) / window), TRAJECTORY, topology
                 )
-                atom1, atom2 = reference["atom_indices"]
-                distance_restraint = SimpleNamespace(
-                    mask1=f"@{atom1}",
-                    mask2=f"@{atom2}",
-                    mask3=None,
-                    mask4=None,
-                )
-                distances = _mag(read_restraint_data(trajectory, distance_restraint))
+                if reference["groups"]:
+                    # not read_restraint_data: cpptraj would use the mass-weighted centre
+                    distances = _group_distances(trajectory, reference)
+                else:
+                    atom1, atom2 = reference["atom_indices"]
+                    distance_restraint = SimpleNamespace(
+                        mask1=f"@{atom1}",
+                        mask2=f"@{atom2}",
+                        mask3=None,
+                        mask4=None,
+                    )
+                    distances = _mag(read_restraint_data(trajectory, distance_restraint))
 
             distances = np.asarray(distances, dtype=float).reshape(-1)
             if distances.size == 0 or not np.all(np.isfinite(distances)):
@@ -415,9 +452,12 @@ def _distance_wall_summary(windows_dir, simulation_data, window_order, topology=
 
         pooled_energies = np.concatenate(all_energies)
         pooled_active = np.concatenate(all_active)
+        parameters = {"amber_atom_indices_1based": reference["atom_indices"]}
+        if reference["groups"]:
+            parameters["amber_groups_1based"] = reference["groups"]
         summaries.append({
             "parameters": {
-                "amber_atom_indices_1based": reference["atom_indices"],
+                **parameters,
                 "r1_angstrom": reference["r1"],
                 "r2_angstrom": reference["r2"],
                 "r3_angstrom": reference["r3"],
@@ -875,11 +915,13 @@ def calculate_free_energy(windows_dir, plot_path=None, grid_path=None, title_nam
 
     if angle_grid_path:
         try:
-            cone = _read_cone_wall(Path(windows_dir) / "a000" / "disang.rest")
+            cone, cone_on_centroid = _read_cone_wall(Path(windows_dir) / "a000" / "disang.rest",
+                                                     with_group=True)
         except OSError as e:                         # a plot detail must not block results.json
-            cone = None
+            cone, cone_on_centroid = None, False
             print(f"warning: no cone line in the attach angle grid: {e}", flush=True)
-        attach_angle_grid(fe, angle_grid_path, labels=attach_window_names, cone=cone)
+        attach_angle_grid(fe, angle_grid_path, labels=attach_window_names, cone=cone,
+                          cone_on_centroid=cone_on_centroid)
 
     if dihedral_path:
         try:

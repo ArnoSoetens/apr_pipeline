@@ -112,7 +112,11 @@ def _validate(cfg):
             and wall[key] > 0,
             f"apr.restraints.walls.distance.{key} must be a finite positive number",
         )
-    if wall["mode"] == "rim":
+    need(
+        wall["guest"] in ("g1", "centroid"),
+        "apr.restraints.walls.distance.guest must be 'g1' or 'centroid'",
+    )
+    if wall["mode"] == "rim" and wall["guest"] == "g1":
         rim_offset = wall.get("rim_offset")
         need(
             isinstance(rim_offset, (int, float))
@@ -121,6 +125,15 @@ def _validate(cfg):
             and rim_offset >= 0,
             "apr.restraints.walls.distance.rim_offset must be a finite "
             "nonnegative distance in rim mode",
+        )
+    if wall["mode"] == "rim" and wall["guest"] == "centroid":
+        radius_offset = wall.get("radius_offset")
+        need(
+            isinstance(radius_offset, (int, float))
+            and not isinstance(radius_offset, bool)
+            and math.isfinite(radius_offset),
+            "apr.restraints.walls.distance.radius_offset must be a finite distance "
+            "(Angstrom, may be negative) in rim mode with guest = 'centroid'",
         )
         parabolic_width = wall.get("parabolic_width")
         need(
@@ -139,6 +152,8 @@ def _validate(cfg):
     cone = a["restraints"]["walls"]["cone"]
     need(isinstance(cone["enabled"], bool),
          "apr.restraints.walls.cone.enabled must be true or false")
+    need(cone["guest"] in ("g1", "centroid"),
+         "apr.restraints.walls.cone.guest must be 'g1' or 'centroid'")
     need(finite_number(cone["angle_offset"]),
          "apr.restraints.walls.cone.angle_offset must be a finite number of degrees")
     for key in ("parabolic_width", "rk2"):
@@ -245,11 +260,14 @@ def load_config(path=CONFIG_PATH):
     distance_wall.setdefault("r4", 13.0)
     distance_wall.setdefault("rk2", 100.0)
     distance_wall.setdefault("rk3", 100.0)
+    distance_wall.setdefault("guest", "g1")
     if distance_wall["mode"] == "rim":
         distance_wall.setdefault("rim_offset", 1.0)
+        distance_wall.setdefault("radius_offset", -1.0)
         distance_wall.setdefault("parabolic_width", 1.0)
     cone_wall = walls.setdefault("cone", {})
     cone_wall.setdefault("enabled", False)
+    cone_wall.setdefault("guest", "g1")
     cone_wall.setdefault("angle_offset", 0.0)
     cone_wall.setdefault("parabolic_width", 5.0)
     cone_wall.setdefault("rk2", 100.0)

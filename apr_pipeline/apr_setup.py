@@ -245,10 +245,34 @@ def _create_distance_wall(
     return wall
 
 
-def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HOST):
+def _guest_centroid(structure, guest_prefix=GUEST):
+    """Unweighted centroid of all guest atoms (what an Amber group restraint uses: the
+    coordinate-averaged position, not the centre of mass) and the guest radius: the largest
+    centroid-to-heavy-atom distance."""
+    atoms = [atom for atom in structure.atoms if atom.residue.name == guest_prefix]
+    if not atoms:
+        raise ValueError(f"no atoms in guest residue {guest_prefix}")
+    xyz = np.array([[atom.xx, atom.xy, atom.xz] for atom in atoms])
+    centroid = xyz.mean(axis=0)
+    heavy = xyz[[atom.atomic_number > 1 for atom in atoms]]
+    radius = float(np.max(np.linalg.norm((heavy if len(heavy) else xyz) - centroid, axis=1)))
+    return centroid, radius
+
+
+def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HOST,
+                           guest_prefix=GUEST):
+    """Flat-bottom distance wall from DM1 to G1 (guest = "g1") or to the centroid of all guest
+    atoms (guest = "centroid", an Amber group restraint).
+
+    Rim mode: r2/r3 = near/far rim plane distance from DM1 -/+ rim_offset (g1), or
+    -/+ (guest radius + radius_offset) (centroid; the radius is the largest centroid-to-heavy-atom
+    distance, so at radius_offset = 0 the wall starts where the whole guest has left the cavity
+    along the axis). r1/r4 lie parabolic_width beyond r2/r3.
+    """
     wall_config = WALLS["distance"]
     if not wall_config["enabled"]:
         return []
+    on_centroid = wall_config.get("guest", "g1") == "centroid"
 
     dm1_position = structure[D1].coordinates[0]
     g1_position = structure[G1].coordinates[0]
@@ -261,6 +285,9 @@ def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HO
             f"restraint atoms must lie in +z order from DM1 "
             f"(G1={g1_distance:.3f} A, G2={g2_distance:.3f} A)"
         )
+    if on_centroid:
+        centroid, guest_radius = _guest_centroid(structure, guest_prefix)
+        start_distance = float(np.linalg.norm(centroid - dm1_position))
 
     if wall_config["mode"] == "rim":
         measured_rim_distances = sorted(
@@ -270,29 +297,43 @@ def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HO
             for atom_group in wall_config["rim_atom_groups"]
         )
         near_rim, far_rim = measured_rim_distances
-        rim_offset = wall_config["rim_offset"]
-        lower_bound = near_rim - rim_offset
-        upper_bound = far_rim + rim_offset
-        if not lower_bound < g1_distance < g2_distance < upper_bound:
-            raise ValueError(
-                "configured beta-CD rim planes do not bracket the restraint atoms "
-                "from DM1 toward +z "
-                f"(near rim={near_rim:.3f} A, G1={g1_distance:.3f} A, "
-                f"G2={g2_distance:.3f} A, far rim={far_rim:.3f} A, "
-                f"rim_offset={rim_offset:.3f} A; allowed range "
-                f"{lower_bound:.3f}-{upper_bound:.3f} A); "
-                "check apr.restraints.walls.distance.rim_atom_groups"
-            )
-
-    if wall_config["mode"] == "rim":
+        if on_centroid:
+            radius_offset = wall_config["radius_offset"]
+            reach = guest_radius + radius_offset
+            r2, r3 = near_rim - reach, far_rim + reach
+            if r2 <= 0:
+                raise ValueError(
+                    f"guest radius {guest_radius:.3f} A + radius_offset {radius_offset:.3f} A "
+                    f"must be smaller than the DM1-to-near-rim distance {near_rim:.3f} A"
+                )
+            if not r2 < start_distance < r3:
+                raise ValueError(
+                    "guest centroid starts outside the distance wall "
+                    f"(DM1-centroid = {start_distance:.3f} A, flat region "
+                    f"{r2:.3f}-{r3:.3f} A: near rim {near_rim:.3f} A, far rim {far_rim:.3f} A, "
+                    f"guest radius {guest_radius:.3f} A, radius_offset {radius_offset:.3f} A)"
+                )
+        else:
+            rim_offset = wall_config["rim_offset"]
+            lower_bound = near_rim - rim_offset
+            upper_bound = far_rim + rim_offset
+            if not lower_bound < g1_distance < g2_distance < upper_bound:
+                raise ValueError(
+                    "configured beta-CD rim planes do not bracket the restraint atoms "
+                    "from DM1 toward +z "
+                    f"(near rim={near_rim:.3f} A, G1={g1_distance:.3f} A, "
+                    f"G2={g2_distance:.3f} A, far rim={far_rim:.3f} A, "
+                    f"rim_offset={rim_offset:.3f} A; allowed range "
+                    f"{lower_bound:.3f}-{upper_bound:.3f} A); "
+                    "check apr.restraints.walls.distance.rim_atom_groups"
+                )
+            r2, r3 = lower_bound, upper_bound
+            if r2 <= 0:
+                raise ValueError(
+                    f"rim_offset {rim_offset:.3f} A must be smaller than the "
+                    f"DM1-to-near-rim distance {near_rim:.3f} A"
+                )
         parabolic_width = wall_config["parabolic_width"]
-        r2 = near_rim - rim_offset
-        if r2 <= 0:
-            raise ValueError(
-                f"rim_offset {rim_offset:.3f} A must be smaller than the "
-                f"DM1-to-near-rim distance {near_rim:.3f} A"
-            )
-        r3 = far_rim + rim_offset
         bounds = (
             max(0.0, r2 - parabolic_width),
             r2,
@@ -307,16 +348,22 @@ def create_wall_restraints(structure, D1, G1, G2, attach_windows, host_prefix=HO
             f"(received {bounds})"
         )
 
+    if on_centroid:
+        label = "DM1-guest centroid"
+        detail = (f" Guest radius {guest_radius:.3f} A; centroid starts "
+                  f"{start_distance:.3f} A from DM1.")
+    else:
+        label, detail = "DM1-G1", ""
     print(
-        "DM1-G1 flat-well wall: "
+        f"{label} flat-well wall: "
         f"r1={bounds[0]:.3f}, r2={bounds[1]:.3f}, "
-        f"r3={bounds[2]:.3f}, r4={bounds[3]:.3f} A."
+        f"r3={bounds[2]:.3f}, r4={bounds[3]:.3f} A.{detail}"
     )
     return [
         _create_distance_wall(
             structure,
             D1,
-            G1,
+            f":{guest_prefix}" if on_centroid else G1,
             attach_windows,
             bounds,
             wall_config["rk2"],
@@ -332,8 +379,10 @@ def _angle_degrees(a, b, c):
     return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
 
 
-def create_cone_wall(structure, D1, D2, G1, attach_windows, host_prefix=HOST):
-    """Flat-bottom D2-D1-G1 angle wall: a cone with its tip at DM1 through the nearest rim.
+def create_cone_wall(structure, D1, D2, G1, attach_windows, host_prefix=HOST, guest_prefix=GUEST):
+    """Flat-bottom angle wall D2-D1-G1 (guest = "g1") or D2-D1-guest centroid (guest =
+    "centroid", an Amber group restraint on all guest atoms): a cone with its tip at DM1 through
+    the nearest rim.
 
     No force from 180 degrees down to r2 = (mean D2-D1-O angle of the oxygens of the rim plane
     nearest DM1) - angle_offset; harmonic (rk2, kcal/mol/rad^2) from r2 down to
@@ -342,10 +391,14 @@ def create_cone_wall(structure, D1, D2, G1, attach_windows, host_prefix=HOST):
     cone = WALLS["cone"]
     if not cone["enabled"]:
         return []
+    on_centroid = cone.get("guest", "g1") == "centroid"
 
     dm1 = structure[D1].coordinates[0]
     dm2 = structure[D2].coordinates[0]
-    g1 = structure[G1].coordinates[0]
+    if on_centroid:
+        guest_point, guest_label = _guest_centroid(structure, guest_prefix)[0], "guest centroid"
+    else:
+        guest_point, guest_label = structure[G1].coordinates[0], "G1"
     rims = []
     for group in WALLS["distance"]["rim_atom_groups"]:
         oxygens = _rim_oxygen_coordinates(structure, group, host_prefix)
@@ -364,16 +417,18 @@ def create_cone_wall(structure, D1, D2, G1, attach_windows, host_prefix=HOST):
             f"{near_angle:.2f}, angle_offset {cone['angle_offset']}, parabolic_width "
             f"{cone['parabolic_width']}); check apr.restraints.walls.cone"
         )
-    g1_angle = _angle_degrees(dm2, dm1, g1)
-    if g1_angle < r2:
+    start_angle = _angle_degrees(dm2, dm1, guest_point)
+    if start_angle < r2:
         raise ValueError(
-            f"G1 starts outside the cone wall (D2-D1-G1 = {g1_angle:.2f} < r2 = {r2:.2f} degrees)"
+            f"{guest_label} starts outside the cone wall "
+            f"(D2-D1-{guest_label} = {start_angle:.2f} < r2 = {r2:.2f} degrees)"
         )
 
     half_angle = 180.0 - r2
     cone_r_far = far_h * np.tan(np.radians(half_angle))
     print(
-        f"D2-D1-G1 cone wall: r1={r1:.2f}, r2={r2:.2f}, r3=r4=180 deg (half-angle {half_angle:.2f}); "
+        f"D2-D1-{guest_label} cone wall: r1={r1:.2f}, r2={r2:.2f}, r3=r4=180 deg "
+        f"(half-angle {half_angle:.2f}; {guest_label} starts at {start_angle:.2f}); "
         f"near rim {near_h:.2f} A above DM1, radius {near_r:.2f} A, angle {near_angle:.2f}; "
         f"far rim {far_h:.2f} A, radius {far_r:.2f} A, angle {far_angle:.2f} "
         f"(half-angle {180.0 - far_angle:.2f}); cone radius at far rim {cone_r_far:.2f} A "
@@ -386,7 +441,7 @@ def create_cone_wall(structure, D1, D2, G1, attach_windows, host_prefix=HOST):
     wall.topology = structure
     wall.mask1 = D2
     wall.mask2 = D1
-    wall.mask3 = G1
+    wall.mask3 = f":{guest_prefix}" if on_centroid else G1
     wall.attach["fc_initial"] = cone["rk2"]
     wall.attach["fc_final"] = cone["rk2"]
     wall.attach["target"] = 180.0
@@ -472,8 +527,8 @@ def set_restraints(G1, G2, host_prefix=HOST, guest_prefix=GUEST):
         guest_restraints.append(r)
 
     wall_restraints = create_wall_restraints(
-        structure, D1, G1, G2, windows[0], host_prefix
-    ) + create_cone_wall(structure, D1, D2, G1, windows[0], host_prefix)
+        structure, D1, G1, G2, windows[0], host_prefix, guest_prefix
+    ) + create_cone_wall(structure, D1, D2, G1, windows[0], host_prefix, guest_prefix)
 
     # Create directories and write disang.rest for each window.
     window_list = create_window_list(guest_restraints)

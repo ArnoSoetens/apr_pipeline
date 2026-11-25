@@ -225,6 +225,55 @@ class WallRestraintTests(unittest.TestCase):
 
         self.assertAlmostEqual(walls[0].custom_restraint_values["r3"], 9.5)
 
+    def centroid_walls(self, radius_offset, structure=None):
+        with (
+            patch.object(apr_setup, "WALLS", {
+                "distance": {
+                    "enabled": True,
+                    "mode": "rim",
+                    "guest": "centroid",
+                    "rim_atom_groups": [list(range(1, 8)), list(range(8, 15))],
+                    "rim_offset": 2.0,                 # not used with guest = "centroid"
+                    "radius_offset": radius_offset,
+                    "parabolic_width": 1.0,
+                    "rk2": 100.0,
+                    "rk3": 100.0,
+                },
+            }),
+            patch.object(apr_setup.restraints, "DAT_restraint", FakeRestraint),
+        ):
+            return apr_setup.create_wall_restraints(
+                structure or wall_test_structure(), ":DM1", ":UNL@15", ":UNL@16", 3
+            )
+
+    def test_centroid_wall_is_a_guest_group_at_rim_plus_radius_plus_offset(self):
+        # rims 5 and 10 A above DM1; guest G1/G2 at 6 and 9 A -> centroid 7.5 A, radius 1.5 A
+        (wall,) = self.centroid_walls(-1.0)
+        self.assertEqual((wall.mask1, wall.mask2), (":DM1", ":UNL"))
+        np.testing.assert_allclose(
+            [wall.custom_restraint_values[key] for key in ("r1", "r2", "r3", "r4")],
+            (3.5, 4.5, 10.5, 11.5),
+        )
+        (wall,) = self.centroid_walls(0.0)
+        np.testing.assert_allclose(
+            [wall.custom_restraint_values[key] for key in ("r2", "r3")], (3.5, 11.5)
+        )
+
+    def test_centroid_starting_outside_the_wall_is_refused(self):
+        # far rim 6.5 A above DM1: r3 = 6.5 + 0.5 = 7.0 < centroid 7.5 A
+        with self.assertRaisesRegex(ValueError, "centroid starts outside the distance wall"):
+            self.centroid_walls(-1.0, wall_test_structure(far_rim_z=0.5))
+
+    def test_guest_centroid_counts_hydrogens_but_the_radius_only_heavy_atoms(self):
+        structure = wall_test_structure()
+        hydrogen = Atom(name="H1", atomic_number=1, mass=1.008)
+        hydrogen.xx = hydrogen.xy = 0.0
+        hydrogen.xz = 6.0
+        structure.add_atom(hydrogen, "UNL", 1)
+        centroid, radius = apr_setup._guest_centroid(structure, "UNL")
+        np.testing.assert_allclose(centroid, (0.0, 0.0, 3.0))   # (0 + 3 + 6) / 3, unweighted
+        self.assertAlmostEqual(radius, 3.0)                      # G1 at z = 0, not the H
+
     def test_disabled_wall_is_omitted(self):
         with (
             patch.object(apr_setup, "WALLS", {
@@ -250,10 +299,11 @@ def cone_test_structure():
     return structure
 
 
-def cone_walls(offset=0.0, enabled=True, structure=None):
+def cone_walls(offset=0.0, enabled=True, structure=None, guest="g1"):
     walls = {
         "distance": {"rim_atom_groups": [list(range(1, 8)), list(range(8, 15))]},
-        "cone": {"enabled": enabled, "angle_offset": offset, "parabolic_width": 5.0, "rk2": 100.0},
+        "cone": {"enabled": enabled, "angle_offset": offset, "parabolic_width": 5.0, "rk2": 100.0,
+                 "guest": guest},
     }
     with (
         patch.object(apr_setup, "WALLS", walls),
@@ -300,6 +350,42 @@ class ConeWallTests(unittest.TestCase):
         structure.atoms[14].xx = 6.0       # G1 at z=0: 6 A off axis, 6 A above DM1 -> 45 deg out
         with self.assertRaisesRegex(ValueError, "outside the cone"):
             cone_walls(offset=-1.0, structure=structure)
+
+    def test_centroid_cone_is_a_guest_group_with_the_same_bounds(self):
+        (wall,) = cone_walls(guest="centroid")
+        self.assertEqual((wall.mask1, wall.mask2, wall.mask3), (":DM2", ":DM1", ":UNL"))
+        np.testing.assert_allclose(self.bounds(wall), (130.0, 135.0, 180.0, 180.0))
+
+    def test_centroid_cone_checks_the_centroid_not_g1(self):
+        structure = cone_test_structure()
+        structure.atoms[15].xx = 20.0      # G2 far off axis: centroid (10, 0) at 7.5 A -> 53 deg out
+        cone_walls(structure=structure)                     # G1 is on the axis: accepted
+        with self.assertRaisesRegex(ValueError, "guest centroid starts outside the cone"):
+            cone_walls(structure=structure, guest="centroid")
+
+
+class WallConfigTests(unittest.TestCase):
+    def test_guest_must_be_g1_or_centroid_for_both_walls(self):
+        import copy
+        import apr_config
+        for wall in ("distance", "cone"):
+            cfg = copy.deepcopy(apr_config.CFG)
+            cfg["apr"]["restraints"]["walls"][wall]["guest"] = "com"
+            with self.subTest(wall=wall), self.assertRaisesRegex(ValueError, f"{wall}.guest"):
+                apr_config._validate(cfg)
+
+    def test_centroid_rim_wall_needs_a_finite_radius_offset_of_either_sign(self):
+        import copy
+        import apr_config
+        cfg = copy.deepcopy(apr_config.CFG)
+        distance = cfg["apr"]["restraints"]["walls"]["distance"]
+        distance.update(mode="rim", guest="centroid", rim_offset=-5.0,   # rim_offset unused
+                        rim_atom_groups=[list(range(1, 8)), list(range(8, 15))])
+        distance["radius_offset"] = -1.0
+        apr_config._validate(cfg)
+        distance["radius_offset"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "radius_offset"):
+            apr_config._validate(cfg)
 
 
 if __name__ == "__main__":
