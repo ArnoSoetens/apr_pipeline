@@ -13,7 +13,7 @@
 
 # ---------------------------------------------------------------------------
 [input]
-smiles_list = "wall.txt"    # SMILES list in data/inputs/, one per line; only read when the
+smiles_list = "beta_cd_guests.txt"    # SMILES list in data/inputs/, one per line; only read when the
                                  # data folder has no data point folders yet
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ static_fc              = [10.0, 100.0, 100.0, 100.0, 100.0, 100.0]   # the six h
 host_conformational_fc = 10.0     # per-glucose conformational restraints
 
 [apr.restraints.walls.distance]
-enabled = false
+enabled = true
 mode = "rim"             # "manual" uses r1-r4 below; "rim" derives r2/r3 from the fitted rims
 rim_atom_groups = [
     [10, 31, 52, 73, 94, 115, 136],
@@ -115,7 +115,7 @@ rk3 = 100.0               # right parabolic force constant (kcal/mol/A^2)
 # Flat-bottom D2-D1-G1 angle wall (attach windows only): no force from 180 degrees down to the
 # angle of the rim nearest DM1 (mean D2-D1-O over its oxygens from walls.distance.rim_atom_groups,
 # which it needs even when the distance wall is manual or off), harmonic below that.
-enabled = false
+enabled = true
 guest = "centroid"        # "g1": D2-D1-G1 angle; "centroid": D2-D1-guest centroid (all guest atoms)
 angle_offset = 0.0        # degrees; > 0 widens the cone beyond the rim oxygens, < 0 narrows it
 parabolic_width = 5.0     # degrees between r1 and r2 (linear beyond r1)
