@@ -8,7 +8,7 @@
                                                     with an integer there that integer
       "anchors": [1, 5]                             G1, G2: the restrained guest atoms, as the atom serial
                                                     numbers in <guest_prefix>.pdb (column 2). null:
-                                                    placement picks the carbon chain ends, G1 the lower
+                                                    placement picks the backbone chain ends, G1 the lower
                                                     one, and writes them here. Set by hand: placement
                                                     turns G1->G2 onto +cavity_axis and keeps them.
     }

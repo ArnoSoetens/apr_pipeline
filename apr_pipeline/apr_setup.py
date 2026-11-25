@@ -596,7 +596,7 @@ def run(dp):
 
     The G1/G2 anchors come from guest_input.json, used as written (guest_masks checks they match
     the placed guest). Folders prepared before that file existed get them from the placed guest
-    PDB's carbon backbone, lower end first (as placement picks them), and they are saved.
+    PDB's backbone chain ends, lower end first (as placement picks them), and they are saved.
     An earlier setup's complex/ and windows/ are removed first, so no window from an older
     window list is left behind (there is no simulation output in them: refuse_simulated).
     """

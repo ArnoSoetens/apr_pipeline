@@ -357,7 +357,7 @@ def run(dp):
     G1/G2 anchors:
       - set in guest_input.json: used as given; G1->G2 is turned onto +cavity_axis, however far.
         The input's atoms must be numbered 1..N (check_serials).
-      - null: the ends of the longest carbon chain. The guest turns as little as possible (so an
+      - null: the ends of the backbone chain (structure.find_backbone_chain). The guest turns as little as possible (so an
         upside-down input stays upside down), then the lower end is called G1, and both are saved.
     Returns the input PDB's path. Raises on a clash or an unusable input.
     """

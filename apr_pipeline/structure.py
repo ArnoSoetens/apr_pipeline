@@ -98,48 +98,74 @@ def smiles_to_pdb(smiles_string, output_file, num_conformers=CFG["structure"]["c
     return mol
 
 
-def find_carbon_backbone_chain(mol):
-    carbons = [a.GetIdx() for a in mol.GetAtoms() if a.GetSymbol() == 'C'] #find index
+def backbone_graph(mol):
+    """Heavy-atom graph (no H, no F) with every non-carbon dead end stripped, repeatedly, until
+    all ends are carbons: heteroatoms remain only where they link carbons (ether/ester O, amine
+    N, ...), so the backbone runs through them but never ends on one (carboxylate O, sulfonate
+    S/O, hydroxyl O, halogens are gone). Without such a linking heteroatom this is exactly the
+    carbon-carbon graph."""
     G = nx.Graph()
-    G.add_nodes_from(carbons) #create graph
+    G.add_nodes_from(a.GetIdx() for a in mol.GetAtoms() if a.GetAtomicNum() not in (1, 9))
     for bond in mol.GetBonds():
         i, j = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-        if i in carbons and j in carbons:
+        if i in G and j in G:
             G.add_edge(i, j)
+    while True:
+        dead_ends = [n for n in G.nodes()
+                     if G.degree(n) <= 1 and mol.GetAtomWithIdx(n).GetAtomicNum() != 6]
+        if not dead_ends:
+            return G
+        G.remove_nodes_from(dead_ends)
 
-    if len(carbons) < 2: #if only 2 carbons, then no chain return the indexes
+
+def find_backbone_chain(mol):
+    """Longest chain of heavy atoms (no H or F) that starts and ends on a carbon: the longest
+    shortest path between two ends of backbone_graph (in a ring system without two ends:
+    between any two carbons). Ties go to the chain with fewer heteroatoms, then to the
+    first pair by atom index. Returns the chain's atom indices (0-based), ends first and last.
+
+    For a guest without a heteroatom between two carbons (alkyl and perfluoroalkyl chains with
+    any end groups) this gives the same chain as the earlier carbon-only search.
+    """
+    G = backbone_graph(mol)
+    carbons = [n for n in G.nodes() if mol.GetAtomWithIdx(n).GetAtomicNum() == 6]
+    if len(carbons) < 2:
         return carbons
 
-    ends = [n for n in G.nodes() if G.degree(n) <= 1] #find the ends
+    def heteroatoms(path):
+        return sum(mol.GetAtomWithIdx(n).GetAtomicNum() != 6 for n in path)
+
+    best = (0, 0, None)                                  # (bonds, heteroatoms, path)
+
+    def consider(i, j, d):
+        nonlocal best
+        if d < best[0] or d == 0:
+            return
+        path = nx.shortest_path(G, i, j)
+        if d > best[0] or heteroatoms(path) < best[1]:
+            best = (d, heteroatoms(path), path)
+
+    ends = [n for n in G.nodes() if G.degree(n) <= 1]    # all carbons (dead ends were stripped)
     if len(ends) < 2:
         lengths = dict(nx.all_pairs_shortest_path_length(G))
-        best = (0, None, None)
         for i in carbons:
             for j in carbons:
+                if j > i:
+                    consider(i, j, lengths.get(i, {}).get(j, 0))
+    else:
+        for i in ends:
+            for j in ends:
                 if j <= i:
                     continue
-                d = lengths.get(i, {}).get(j, 0)
-                if d > best[0]:
-                    best = (d, i, j)
-        if best[1] is None:
-            return carbons
-        return nx.shortest_path(G, best[1], best[2])
+                try:
+                    d = nx.shortest_path_length(G, i, j)
+                except nx.NetworkXNoPath:
+                    continue
+                consider(i, j, d)
 
-    best = (0, None, None)
-    for i in ends:
-        for j in ends:
-            if j <= i:
-                continue
-            try:
-                d = nx.shortest_path_length(G, i, j)
-            except nx.NetworkXNoPath:
-                continue
-            if d > best[0]:
-                best = (d, i, j)
-
-    if best[1] is None:
+    if best[2] is None:
         return carbons
-    return nx.shortest_path(G, best[1], best[2])
+    return best[2]
 
 def pick_backbone_alignment_atoms(chain):
 
@@ -147,10 +173,12 @@ def pick_backbone_alignment_atoms(chain):
 
 
 def backbone_anchors(mol, source="guest"):
-    """G1/G2: the two ends of the longest carbon chain (0-based atom indices)."""
-    chain = find_carbon_backbone_chain(mol)
+    """G1/G2: the two ends of the longest heavy-atom chain that ends on carbons
+    (find_backbone_chain; 0-based atom indices)."""
+    chain = find_backbone_chain(mol)
     if len(chain) < 2:
-        raise ValueError(f"guest needs at least two connected carbon atoms: {source}")
+        raise ValueError(f"guest needs at least two carbon atoms connected through heavy atoms "
+                         f"other than F: {source}")
     return pick_backbone_alignment_atoms(chain)
 
 

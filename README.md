@@ -252,8 +252,15 @@ Each data point has a `guest_input.json` that the setup stages hand to each othe
   dummy atoms: G1→G2 points along `placement.cavity_axis`, the way the guest is
   pulled out. Folders prepared before this file existed get them recomputed from
   `UNL.pdb` (lower end first) and saved.
-  * `null` (the default): placement takes the two ends of the longest carbon
-    chain and turns the guest as little as possible, so a guest given upside
+  * `null` (the default): placement takes the two ends of the longest chain of
+    heavy atoms other than F that starts and ends on a carbon (`structure.find_backbone_chain`):
+    it runs through ether/ester O, amine N and similar links, but never ends on a
+    carboxylate or sulfonate O/S, a hydroxyl or a halogen. Equally long chains go to the one
+    with fewer heteroatoms. For a guest without a heteroatom between two carbons this is
+    simply the longest carbon chain. Check the anchors of a SMILES list beforehand with
+    `python scripts/smiles_to_images.py list.txt out/ --restraints` (b1/b2 are the two ends;
+    G1 is decided at placement).
+    Placement turns the guest as little as possible, so a guest given upside
     down stays upside down. Whichever end then sits lower becomes G1, and both
     are written to the file.
   * Set by hand: placement uses them as given and turns the guest until G1→G2
